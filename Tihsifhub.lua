@@ -1,7 +1,7 @@
 -- ============================================================
--- FishIt Omega Hub | Powered by Game Source Analysis
--- Compatible with: FishIt (Roblox)
--- Template: MyUiTemplate (Fluent Glassmorphism)
+-- FishIt Omega Hub  |  v1.0
+-- Built from full game source analysis (FishingController,
+-- VendorController, TileInteraction, Constants, Tiers, etc.)
 -- ============================================================
 
 local Players          = game:GetService("Players")
@@ -10,1540 +10,1315 @@ local UserInputService = game:GetService("UserInputService")
 local TweenService     = game:GetService("TweenService")
 local ReplicatedStorage= game:GetService("ReplicatedStorage")
 local StarterGui       = game:GetService("StarterGui")
-local HttpService      = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 
--- ─── Safe Landscape Orient ────────────────────────────────
+-- ── Landscape orient ──────────────────────────────────────
 pcall(function() StarterGui.ScreenOrientation = Enum.ScreenOrientation.LandscapeRight end)
 pcall(function() LocalPlayer.PlayerGui.ScreenOrientation = Enum.ScreenOrientation.LandscapeRight end)
 
--- ─── GUI Mount ────────────────────────────────────────────
-local TargetParent = (type(gethui) == "function" and gethui()) or
+-- ── GUI mount ─────────────────────────────────────────────
+local TargetParent =
+    (type(gethui) == "function" and gethui()) or
     (pcall(function() return game:GetService("CoreGui") end) and game:GetService("CoreGui")) or
     LocalPlayer:WaitForChild("PlayerGui")
 
 if not TargetParent then return end
 if TargetParent:FindFirstChild("FishItOmegaHub") then TargetParent.FishItOmegaHub:Destroy() end
 
-local ScreenGui = Instance.new("ScreenGui", TargetParent)
+local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "FishItOmegaHub"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.IgnoreGuiInset = true
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+ScreenGui.Parent = TargetParent
 
--- ─── Theme ────────────────────────────────────────────────
-local Theme = {
-    Background  = Color3.fromRGB(20, 20, 25),
-    Sidebar     = Color3.fromRGB(14, 14, 18),
-    Accent      = Color3.fromRGB(0, 200, 130),
-    AccentDark  = Color3.fromRGB(0, 140, 90),
-    Text        = Color3.fromRGB(235, 235, 235),
-    SubText     = Color3.fromRGB(130, 130, 140),
-    Button      = Color3.fromRGB(30, 30, 36),
-    ButtonHover = Color3.fromRGB(40, 40, 50),
-    Stroke      = Color3.fromRGB(55, 55, 65),
-    Danger      = Color3.fromRGB(220, 60, 60),
-    Warning     = Color3.fromRGB(255, 160, 40),
-    Success     = Color3.fromRGB(60, 200, 100),
+-- ── Theme ─────────────────────────────────────────────────
+local T = {
+    Bg         = Color3.fromRGB(20, 20, 26),
+    Sidebar    = Color3.fromRGB(14, 14, 20),
+    Accent     = Color3.fromRGB(0, 195, 125),
+    AccentDim  = Color3.fromRGB(0, 130, 85),
+    Text       = Color3.fromRGB(235, 235, 235),
+    Sub        = Color3.fromRGB(125, 125, 140),
+    Btn        = Color3.fromRGB(32, 32, 40),
+    Stroke     = Color3.fromRGB(55, 55, 68),
+    Danger     = Color3.fromRGB(215, 55, 55),
+    Warn       = Color3.fromRGB(240, 150, 30),
+    Good       = Color3.fromRGB(55, 195, 95),
 }
 
--- ─── State ────────────────────────────────────────────────
-local State = {
-    -- Fishing Support
-    ShowRealPing        = false,
-    ShowFishingPanel    = false,
-    AutoEquipRod        = false,
-    NoFishingAnimations = false,
-    WalkOnWater         = false,
-    FreezePlayer        = false,
-    -- Fishing Features (Detector / Auto Fisher)
-    DetectorActive      = false,
-    DetectorStatus      = "Offline",
-    DetectorTime        = 0,
-    DetectorBag         = 0,
-    WaitDelay           = 1.5,
-    -- Instant Features
-    InstantFishing      = false,
-    CompleteDelay       = 0,
-    -- Selling
-    AutoSell            = false,
-    SellMode            = "Delay",
-    SellValue           = 0,
-    -- Favorite
-    AutoFavorite        = false,
-    FavName             = "Any",
-    FavRarity           = "Any",
-    FavVariant          = "Any",
-    FavMode             = "Add",
-    -- Auto Rejoin
-    AutoRejoin          = false,
-    RejoinTimer         = 1,
-    RejoinMode          = "Timer",
-    -- Misc toggles
-    FPSBooster         = false,
-    WalkSpeed          = false,
-    WalkSpeedValue     = 16,
-    Noclip             = false,
-    InfJump            = false,
+-- ── State ─────────────────────────────────────────────────
+local S = {
+    DetectorActive  = false, DetectorStatus = "Offline",
+    DetectorTime    = 0,     DetectorBag    = 0,
+    WaitDelay       = 1.5,   CompleteDelay  = 0,
+    InstantFishing  = false,
+    AutoSell        = false, SellMode       = "Delay", SellValue = 30,
+    AutoFavorite    = false, FavRarity      = "Any",  FavVariant = "Any",
+    AutoRejoin      = false, RejoinTimer    = 1,
+    ShowPing        = false, AutoEquipRod   = false,
+    WalkOnWater     = false, FreezePlayer   = false,
+    WalkSpeed       = false, WalkSpeedVal   = 50,
+    Noclip          = false, InfJump        = false,
+    FPSBoost        = false,
+    SessionFish     = 0,
 }
 
--- ─── Net RemoteEvents/Functions (resolved lazily) ─────────
-local Net = {}
+-- ── Remote helpers ────────────────────────────────────────
+local _netCache = {}
 local function getNet(name, isFunc)
-    if Net[name] then return Net[name] end
-    local ok, mod = pcall(function() return require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Net")) end)
-    if not ok then return nil end
-    local obj
-    if isFunc then
-        ok, obj = pcall(function() return mod:RemoteFunction(name) end)
-    else
-        ok, obj = pcall(function() return mod:RemoteEvent(name) end)
-    end
-    if ok and obj then Net[name] = obj end
-    return Net[name]
+    if _netCache[name] then return _netCache[name] end
+    local ok, mod = pcall(function()
+        return require(ReplicatedStorage:WaitForChild("Packages",5):WaitForChild("Net",5))
+    end)
+    if not ok or not mod then return nil end
+    local ok2, obj = pcall(function()
+        return isFunc and mod:RemoteFunction(name) or mod:RemoteEvent(name)
+    end)
+    if ok2 and obj then _netCache[name] = obj end
+    return _netCache[name]
 end
 
--- ─── Replion Data ─────────────────────────────────────────
-local ReplionData = nil
-local function getReplionData()
-    if ReplionData and not ReplionData.Destroyed then return ReplionData end
+local _replionData
+local function getRepData()
+    if _replionData and not _replionData.Destroyed then return _replionData end
     local ok, mod = pcall(function()
-        return require(ReplicatedStorage:WaitForChild("Packages"):WaitForChild("Replion"))
+        return require(ReplicatedStorage:WaitForChild("Packages",5):WaitForChild("Replion",5))
     end)
     if not ok then return nil end
-    local ok2, data = pcall(function() return mod.Client:WaitReplion("Data") end)
-    if ok2 and data then ReplionData = data end
-    return ReplionData
+    local ok2, d = pcall(function() return mod.Client:WaitReplion("Data") end)
+    if ok2 then _replionData = d end
+    return _replionData
 end
 
--- ─── ItemUtility ──────────────────────────────────────────
-local ItemUtil = nil
-local function getItemUtil()
-    if ItemUtil then return ItemUtil end
-    local ok, mod = pcall(function()
-        return require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("ItemUtility"))
-    end)
-    if ok then ItemUtil = mod end
-    return ItemUtil
+local function getInvItems()
+    local d = getRepData()
+    if not d then return {} end
+    local ok, v = pcall(function() return d:GetExpect({"Inventory","Items"}) end)
+    return ok and v or {}
 end
 
--- ─── TierUtility ──────────────────────────────────────────
-local TierUtil = nil
-local function getTierUtil()
-    if TierUtil then return TierUtil end
-    local ok, mod = pcall(function()
-        return require(ReplicatedStorage:WaitForChild("Shared"):WaitForChild("TierUtility"))
-    end)
-    if ok then TierUtil = mod end
-    return TierUtil
-end
+-- ── Character helpers ─────────────────────────────────────
+local function getChar()  return LocalPlayer.Character end
+local function getHRP()   local c=getChar() return c and c:FindFirstChild("HumanoidRootPart") end
+local function getHum()   local c=getChar() return c and c:FindFirstChildOfClass("Humanoid") end
 
--- ─── Helpers ──────────────────────────────────────────────
-local function getCharacter()
-    return LocalPlayer.Character
-end
-local function getHRP()
-    local c = getCharacter()
-    return c and c:FindFirstChild("HumanoidRootPart")
-end
-local function getHumanoid()
-    local c = getCharacter()
-    return c and c:FindFirstChildOfClass("Humanoid")
-end
-
-local function notify(msg, color)
+local function notify(msg)
     pcall(function()
-        StarterGui:SetCore("SendNotification", {
-            Title = "FishIt Hub",
-            Text  = msg,
-            Duration = 3,
-            Button1 = "OK",
-        })
+        StarterGui:SetCore("SendNotification",{Title="FishIt Hub",Text=msg,Duration=3})
     end)
 end
 
-local function getInventoryItems()
-    local data = getReplionData()
-    if not data then return {} end
-    local ok, inv = pcall(function() return data:GetExpect({"Inventory","Items"}) end)
-    if ok and inv then return inv end
-    local ok2, inv2 = pcall(function() return data:Get({"Inventory","Items"}) end)
-    if ok2 and inv2 then return inv2 end
-    return {}
-end
-
-local function getItemData(id)
-    local util = getItemUtil()
-    if not util then return nil end
-    local ok, d = pcall(function() return util:GetItemData(id) end)
-    return ok and d or nil
-end
-
-local function getTierFromRarity(chance)
-    local util = getTierUtil()
-    if not util then return nil end
-    local ok, t = pcall(function() return util:GetTierFromRarity(chance) end)
-    return ok and t or nil
-end
-
-local function getTierByName(name)
-    local util = getTierUtil()
-    if not util then return nil end
-    local ok, t = pcall(function() return util:GetTier(name) end)
-    return ok and t or nil
-end
-
 -- ============================================================
--- FEATURE IMPLEMENTATIONS
+-- GAME FEATURES
 -- ============================================================
 
--- ── Auto Fishing (Detector-based loop) ────────────────────
-local autoFishThread = nil
-
-local function startAutoFisher()
-    if autoFishThread then task.cancel(autoFishThread) end
-    autoFishThread = task.spawn(function()
-        State.DetectorStatus = "Running"
-        State.DetectorTime   = 0
-        State.DetectorBag    = 0
-        local camera = workspace.CurrentCamera
-
-        while State.DetectorActive do
-            -- 1. Cast rod to center screen
+-- Auto Fisher
+local fishThread
+local function startFisher()
+    if fishThread then task.cancel(fishThread) end
+    fishThread = task.spawn(function()
+        S.DetectorStatus = "Running"
+        S.DetectorTime   = 0
+        local cam = workspace.CurrentCamera
+        while S.DetectorActive do
+            -- Cast rod
             local castRF = getNet("ChargeFishingRod", true)
             if castRF then
-                local vp = camera.ViewportSize
+                local vp = cam.ViewportSize
                 pcall(function()
-                    castRF:InvokeServer(nil, nil, Vector2.new(vp.X / 2, vp.Y / 2), nil)
+                    castRF:InvokeServer(nil, nil, Vector2.new(vp.X/2, vp.Y/2), nil)
                 end)
             end
             task.wait(0.5)
-
-            -- 2. Wait for minigame to start then click
-            local startTime = tick()
-            local waitLimit = State.WaitDelay + 10
-            local minigameRF = getNet("RequestFishingMinigameStarted", true)
-            local catchRF    = getNet("CatchFishCompleted", true)
-
-            local gotFish = false
-            while State.DetectorActive and (tick() - startTime) < waitLimit do
+            -- Click/complete minigame
+            local t0 = tick()
+            local catchRF = getNet("CatchFishCompleted", true)
+            local caught = false
+            while S.DetectorActive and (tick()-t0) < (S.WaitDelay + 12) do
                 task.wait(0.19)
-                State.DetectorTime = tick() - startTime
-
-                if State.InstantFishing then
-                    if catchRF then
-                        local ok, result = pcall(function() return catchRF:InvokeServer() end)
-                        if ok and result then gotFish = true break end
-                    end
-                else
-                    -- Try to click minigame
-                    local clickRF = getNet("CatchFishCompleted", true)
-                    if clickRF then
-                        local ok, res = pcall(function() return clickRF:InvokeServer() end)
-                        if ok and res then gotFish = true break end
-                    end
+                S.DetectorTime = tick()-t0
+                if catchRF then
+                    local ok, res = pcall(function() return catchRF:InvokeServer() end)
+                    if ok and res then caught=true break end
                 end
             end
-
-            if gotFish then
-                State.DetectorBag = State.DetectorBag + 1
+            if caught then
+                S.DetectorBag  = S.DetectorBag + 1
+                S.SessionFish  = S.SessionFish + 1
             end
-
-            task.wait(math.max(State.WaitDelay, 0.1))
+            task.wait(math.max(S.WaitDelay, 0.1))
         end
-        State.DetectorStatus = "Offline"
+        S.DetectorStatus = "Offline"
     end)
 end
-
-local function stopAutoFisher()
-    if autoFishThread then
-        task.cancel(autoFishThread)
-        autoFishThread = nil
-    end
-    State.DetectorStatus = "Offline"
+local function stopFisher()
+    if fishThread then task.cancel(fishThread) fishThread = nil end
+    S.DetectorStatus = "Offline"
 end
 
--- ── Sell All Items ────────────────────────────────────────
-local function sellAll(maxTier)
-    local sellRF = getNet("SellAllItems", true)
-    if not sellRF then
-        notify("SellAllItems remote not found!", Color3.fromRGB(255, 100, 100))
-        return
-    end
-    local ok, res = pcall(function() return sellRF:InvokeServer() end)
-    if ok then
-        notify("Sold all fish! ✓")
-    end
+-- Sell All
+local function doSellAll()
+    local rf = getNet("SellAllItems", true)
+    if rf then pcall(function() rf:InvokeServer() end) notify("Sold all fish! ✓") end
 end
-
--- Auto sell loop
-local autoSellThread = nil
+local sellThread
 local function startAutoSell()
-    if autoSellThread then task.cancel(autoSellThread) end
-    autoSellThread = task.spawn(function()
-        while State.AutoSell do
-            if State.SellMode == "Delay" then
-                task.wait(math.max(State.SellValue, 5))
-                sellAll()
-            elseif State.SellMode == "Bag Full" then
-                local data = getReplionData()
-                if data then
-                    local ok, inv = pcall(function() return data:GetExpect("Inventory") end)
-                    if ok and inv then
-                        local count = #inv.Items
-                        if count >= (State.SellValue > 0 and State.SellValue or 4500) then
-                            sellAll()
-                        end
-                    end
-                end
-                task.wait(2)
-            else
-                task.wait(2)
-                sellAll()
-            end
+    if sellThread then task.cancel(sellThread) end
+    sellThread = task.spawn(function()
+        while S.AutoSell do
+            task.wait(math.max(S.SellValue, 5))
+            doSellAll()
         end
     end)
 end
 
--- ── Auto Favorite ─────────────────────────────────────────
-local function favoriteItem(uuid)
+-- Favorite
+local function favoriteUUID(uuid)
     local ev = getNet("FavoriteItem", false)
-    if ev then
-        pcall(function() ev:FireServer(uuid) end)
-    end
+    if ev then pcall(function() ev:FireServer(uuid) end) end
 end
-
-local function autoFavoriteLoop()
-    local items = getInventoryItems()
-    if not items then return end
-    for _, item in ipairs(items) do
-        if not item.Favorite then
-            local data = getItemData(item.Id)
-            if data then
-                local nameMatch    = State.FavName == "Any" or (data.Data and data.Data.Name and data.Data.Name:lower():find(State.FavName:lower()))
-                local variantMatch = State.FavVariant == "Any" or (item.Variant and item.Variant == State.FavVariant)
-                local rarityMatch  = true
-                if State.FavRarity ~= "Any" then
-                    local tierUtil = getTierUtil()
-                    if tierUtil then
-                        local tier
-                        if item.Probability and item.Probability.Chance then
-                            local ok, t = pcall(function() return tierUtil:GetTierFromRarity(item.Probability.Chance) end)
-                            if ok then tier = t end
-                        elseif data.Data and data.Data.Tier then
-                            local ok, t = pcall(function() return tierUtil:GetTier(data.Data.Tier) end)
-                            if ok then tier = t end
-                        end
-                        rarityMatch = tier and tier.Name == State.FavRarity
-                    end
-                end
-                if nameMatch and variantMatch and rarityMatch then
-                    favoriteItem(item.UUID)
-                    task.wait(0.1)
-                end
-            end
+local function runFavoriteLoop()
+    local RARITY_MAP = {
+        Common=1, Uncommon=2, Rare=3, Epic=4, Legendary=5, Mythic=6, SECRET=7
+    }
+    for _, item in ipairs(getInvItems()) do
+        local skip = false
+        if S.FavRarity ~= "Any" then
+            local tier = item.Tier or (item.Probability and item.Probability.Tier) or 0
+            if tier ~= (RARITY_MAP[S.FavRarity] or 0) then skip = true end
         end
-    end
-end
-
-local function unfavoriteAllFish()
-    local items = getInventoryItems()
-    if not items then return end
-    for _, item in ipairs(items) do
-        if item.Favorite then
-            favoriteItem(item.UUID) -- toggle off
+        if S.FavVariant ~= "Any" and (item.Variant or "Normal") ~= S.FavVariant then skip = true end
+        if not skip and not item.Favorite then
+            favoriteUUID(item.UUID)
             task.wait(0.08)
         end
     end
-    notify("Unfavorited all fish!")
 end
-
--- Auto Favorite loop
-local autoFavThread = nil
-local function startAutoFavorite()
-    if autoFavThread then task.cancel(autoFavThread) end
-    autoFavThread = task.spawn(function()
-        while State.AutoFavorite do
-            autoFavoriteLoop()
-            task.wait(3)
-        end
+local favThread
+local function startAutoFav()
+    if favThread then task.cancel(favThread) end
+    favThread = task.spawn(function()
+        while S.AutoFavorite do runFavoriteLoop() task.wait(3) end
     end)
 end
-
--- ── Walk on Water ─────────────────────────────────────────
-local wowThread = nil
-local function startWalkOnWater()
-    if wowThread then task.cancel(wowThread) end
-    wowThread = task.spawn(function()
-        while State.WalkOnWater do
-            local char = getCharacter()
-            if char then
-                for _, part in ipairs(char:GetDescendants()) do
-                    if part:IsA("BasePart") then
-                        part.CanCollide = true
-                    end
-                end
-                local hrp = char:FindFirstChild("HumanoidRootPart")
-                if hrp then
-                    hrp.CustomPhysicalProperties = PhysicalProperties.new(0.7, 0.3, 0, 0, 0)
-                end
-            end
-            -- Apply no-sink by raising above water if needed
-            local hrp = getHRP()
-            if hrp and hrp.Position.Y < 0.5 then
-                hrp.CFrame = hrp.CFrame * CFrame.new(0, 0.3, 0)
-            end
-            task.wait(0.1)
-        end
-    end)
-end
-
--- ── Freeze Player ─────────────────────────────────────────
-local function applyFreeze(frozen)
-    local hum = getHumanoid()
-    if hum then
-        hum.WalkSpeed = frozen and 0 or (State.WalkSpeed and State.WalkSpeedValue or 16)
-        hum.JumpPower = frozen and 0 or 50
+local function unfavoriteAll()
+    for _, item in ipairs(getInvItems()) do
+        if item.Favorite then favoriteUUID(item.UUID) task.wait(0.07) end
     end
+    notify("Unfavorited all!")
 end
 
--- ── Noclip ────────────────────────────────────────────────
-local noclipThread = nil
-local function startNoclip()
-    if noclipThread then task.cancel(noclipThread) end
-    noclipThread = RunService.Stepped:Connect(function()
-        if not State.Noclip then return end
-        local char = getCharacter()
-        if char then
-            for _, v in ipairs(char:GetDescendants()) do
-                if v:IsA("BasePart") then
-                    v.CanCollide = false
-                end
-            end
-        end
-    end)
-end
-
--- ── WalkSpeed ─────────────────────────────────────────────
-local wsThread = nil
-local function applyWalkSpeed()
-    local hum = getHumanoid()
-    if hum and State.WalkSpeed and not State.FreezePlayer then
-        hum.WalkSpeed = State.WalkSpeedValue
-    end
-end
-
--- ── Infinite Jump ─────────────────────────────────────────
-local infJumpConn = nil
-local function enableInfJump(on)
-    if infJumpConn then infJumpConn:Disconnect() infJumpConn = nil end
+-- Walk on water
+local wowConn
+local function toggleWoW(on)
+    if wowConn then wowConn:Disconnect() wowConn = nil end
     if on then
-        infJumpConn = UserInputService.JumpRequest:Connect(function()
-            local hum = getHumanoid()
-            if hum then hum:ChangeState(Enum.HumanoidStateType.Jumping) end
+        wowConn = RunService.Heartbeat:Connect(function()
+            local hrp = getHRP()
+            if hrp and hrp.Position.Y < 0.4 then
+                hrp.CFrame = hrp.CFrame + Vector3.new(0, 0.5, 0)
+            end
         end)
     end
 end
 
--- ── Auto Rejoin ───────────────────────────────────────────
-local rejoinThread = nil
-local function startAutoRejoin()
+-- Noclip
+local noclipConn
+local function toggleNoclip(on)
+    if noclipConn then noclipConn:Disconnect() noclipConn = nil end
+    if on then
+        noclipConn = RunService.Stepped:Connect(function()
+            local c = getChar()
+            if c then
+                for _, p in ipairs(c:GetDescendants()) do
+                    if p:IsA("BasePart") then p.CanCollide = false end
+                end
+            end
+        end)
+    else
+        local c = getChar()
+        if c then
+            for _, p in ipairs(c:GetDescendants()) do
+                if p:IsA("BasePart") then p.CanCollide = true end
+            end
+        end
+    end
+end
+
+-- Inf jump
+local infJumpConn
+local function toggleInfJump(on)
+    if infJumpConn then infJumpConn:Disconnect() infJumpConn = nil end
+    if on then
+        infJumpConn = UserInputService.JumpRequest:Connect(function()
+            local h = getHum()
+            if h then h:ChangeState(Enum.HumanoidStateType.Jumping) end
+        end)
+    end
+end
+
+-- Walkspeed loop
+RunService.Heartbeat:Connect(function()
+    if S.WalkSpeed and not S.FreezePlayer then
+        local h = getHum()
+        if h then h.WalkSpeed = S.WalkSpeedVal end
+    end
+    if S.FreezePlayer then
+        local h = getHum()
+        if h then h.WalkSpeed = 0; h.JumpPower = 0 end
+    end
+end)
+
+-- Re-apply on respawn
+LocalPlayer.CharacterAdded:Connect(function()
+    task.wait(1)
+    if S.WalkSpeed   then local h=getHum() if h then h.WalkSpeed = S.WalkSpeedVal end end
+    if S.InfJump     then toggleInfJump(true) end
+    if S.Noclip      then toggleNoclip(true) end
+end)
+
+-- Auto rejoin
+local rejoinThread
+local function startRejoin()
     if rejoinThread then task.cancel(rejoinThread) end
     rejoinThread = task.spawn(function()
-        task.wait(State.RejoinTimer * 3600)
-        if State.AutoRejoin then
-            local teleport = game:GetService("TeleportService")
-            pcall(function() teleport:Teleport(game.PlaceId, LocalPlayer) end)
+        task.wait(S.RejoinTimer * 3600)
+        if S.AutoRejoin then
+            pcall(function() game:GetService("TeleportService"):Teleport(game.PlaceId, LocalPlayer) end)
         end
     end)
 end
 
--- ── FPS Boost ─────────────────────────────────────────────
+-- Teleport
+local savedCF = nil
+local LOCS = {
+    ["Fisherman Island"] = Vector3.new(0, 5, 0),
+    ["Sandy Shore"]      = Vector3.new(130, 5, 2768),
+    ["Deep Ocean"]       = Vector3.new(-62, 5, 2767),
+    ["Volcano Area"]     = Vector3.new(300, 65, -200),
+    ["Ancient Ruins"]    = Vector3.new(-400, 12, 500),
+    ["Crystal Cave"]     = Vector3.new(150, -18, -600),
+    ["Sell NPC"]         = Vector3.new(10, 5, 30),
+}
+local function tpTo(v3)
+    local h = getHRP()
+    if h then h.CFrame = CFrame.new(v3 + Vector3.new(0,5,0)) end
+end
+local function tpToPlayer(name)
+    local pl = Players:FindFirstChild(name)
+    if pl and pl.Character then
+        local h = pl.Character:FindFirstChild("HumanoidRootPart")
+        if h then tpTo(h.Position) notify("Teleported to "..name) return end
+    end
+    notify("Player '"..name.."' not found!")
+end
+
+-- Auto equip best rod
+local function equipBestRod()
+    local ev = getNet("EquipItem", false)
+    if not ev then return end
+    for _, item in ipairs(getInvItems()) do
+        -- rod IDs typically contain "Rod" keyword – equip first one found
+        if item.Id and tostring(item.Id):lower():find("rod") then
+            pcall(function() ev:FireServer(item.UUID, "Fishing Rods") end)
+            notify("Equipped a fishing rod!")
+            return
+        end
+    end
+end
+
+-- FPS boost
 local function applyFPSBoost(on)
     if on then
         settings().Rendering.QualityLevel = Enum.QualityLevel.Level01
-        workspace.StreamingEnabled = false
         pcall(function() game:GetService("Lighting").GlobalShadows = false end)
-        pcall(function() game:GetService("Lighting").FogEnd = 10000 end)
     else
         settings().Rendering.QualityLevel = Enum.QualityLevel.Automatic
         pcall(function() game:GetService("Lighting").GlobalShadows = true end)
     end
 end
 
--- ── Teleport to Locations ─────────────────────────────────
-local LOCATIONS = {
-    ["Fisherman Island"]   = Vector3.new(0, 5, 0),
-    ["Sandy Shore"]        = Vector3.new(130, 4, 2768),
-    ["Deep Ocean"]         = Vector3.new(-62, 4, 2767),
-    ["Volcano"]            = Vector3.new(300, 60, -200),
-    ["Ancient Ruins"]      = Vector3.new(-400, 10, 500),
-    ["Crystal Cave"]       = Vector3.new(150, -20, -600),
-    ["Sell NPC"]           = Vector3.new(10, 5, 30),
-}
-
-local function teleportTo(pos)
-    local hrp = getHRP()
-    if hrp then
-        hrp.CFrame = CFrame.new(pos + Vector3.new(0, 5, 0))
-    end
-end
-
-local function teleportToPlayer(name)
-    local target = Players:FindFirstChild(name)
-    if target and target.Character then
-        local hrp = target.Character:FindFirstChild("HumanoidRootPart")
-        if hrp then teleportTo(hrp.Position) end
-    end
-end
-
--- ── Auto Equip Best Rod ────────────────────────────────────
-local function autoEquipBestRod()
-    local data = getReplionData()
-    if not data then return end
-    local ok, inv = pcall(function() return data:GetExpect("Inventory") end)
-    if not ok or not inv then return end
-    local rods = {}
-    for _, item in ipairs(inv.Items or {}) do
-        local d = getItemData(item.Id)
-        if d and d.Data and d.Data.Type == "Fishing Rods" then
-            table.insert(rods, item)
-        end
-    end
-    if #rods > 0 then
-        local equipEv = getNet("EquipItem", false)
-        if equipEv then
-            local best = rods[1]
-            -- Prefer non-starter rod
-            for _, r in ipairs(rods) do
-                local d = getItemData(r.Id)
-                if d and d.Data.Name ~= "Starter Rod" then best = r break end
-            end
-            pcall(function() equipEv:FireServer(best.UUID, "Fishing Rods") end)
-            notify("Equipped: " .. (getItemData(best.Id) and getItemData(best.Id).Data.Name or "Rod"))
-        end
-    end
-end
-
--- ── No Fishing Animations ─────────────────────────────────
-local function applyNoAnimations(on)
-    local char = getCharacter()
-    if not char then return end
-    if on then
-        for _, anim in ipairs(char:GetDescendants()) do
-            if anim:IsA("AnimationTrack") then
-                pcall(function() anim:Stop() end)
-            end
-        end
-    end
-end
-
--- ── Ping Display ──────────────────────────────────────────
-local pingLabel = nil
-
--- ── Character respawn re-apply ─────────────────────────────
-LocalPlayer.CharacterAdded:Connect(function(char)
-    task.wait(1)
-    if State.WalkSpeed then applyWalkSpeed() end
-    if State.FreezePlayer then applyFreeze(true) end
-    if State.InfJump then enableInfJump(true) end
-    if State.Noclip and not noclipThread then startNoclip() end
-end)
-
 -- ============================================================
--- UI CONSTRUCTION
+-- UI BUILDER
 -- ============================================================
 
--- ── Toggle Icon (minimized) ───────────────────────────────
-local ToggleIcon = Instance.new("TextButton", ScreenGui)
-ToggleIcon.Size     = UDim2.new(0, 48, 0, 48)
-ToggleIcon.Position = UDim2.new(0.5, -24, 0.04, 0)
-ToggleIcon.BackgroundColor3 = Theme.Background
-ToggleIcon.BackgroundTransparency = 0.05
-ToggleIcon.Text = "🎣"
-ToggleIcon.TextSize = 24
-ToggleIcon.Visible = false
-ToggleIcon.ZIndex = 10
-Instance.new("UICorner", ToggleIcon).CornerRadius = UDim.new(1, 0)
-local iconStroke = Instance.new("UIStroke", ToggleIcon)
-iconStroke.Color = Theme.Accent
-iconStroke.Thickness = 2
-EnableDragToggle = function()
-    local drag, start, startPos
-    ToggleIcon.InputBegan:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            drag = true; start = i.Position; startPos = ToggleIcon.Position
+-- ── Minimize icon ─────────────────────────────────────────
+local MinBtn = Instance.new("TextButton", ScreenGui)
+MinBtn.Size     = UDim2.fromOffset(46, 46)
+MinBtn.Position = UDim2.new(0.5, -23, 0.04, 0)
+MinBtn.BackgroundColor3 = T.Bg
+MinBtn.Text     = "🎣"
+MinBtn.TextSize = 22
+MinBtn.Visible  = false
+MinBtn.ZIndex   = 20
+Instance.new("UICorner", MinBtn).CornerRadius = UDim.new(1, 0)
+local ms = Instance.new("UIStroke", MinBtn)
+ms.Color = T.Accent; ms.Thickness = 2
+
+-- Make icon draggable
+do
+    local dragging, dStart, dOrigin
+    MinBtn.InputBegan:Connect(function(i)
+        if i.UserInputType.Name:find("Mouse") or i.UserInputType == Enum.UserInputType.Touch then
+            dragging = true; dStart = i.Position; dOrigin = MinBtn.Position
             i.Changed:Connect(function()
-                if i.UserInputState == Enum.UserInputState.End then drag = false end
+                if i.UserInputState == Enum.UserInputState.End then dragging = false end
             end)
         end
     end)
     UserInputService.InputChanged:Connect(function(i)
-        if drag and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-            local d = i.Position - start
-            ToggleIcon.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            local d = i.Position - dStart
+            MinBtn.Position = UDim2.new(dOrigin.X.Scale, dOrigin.X.Offset+d.X, dOrigin.Y.Scale, dOrigin.Y.Offset+d.Y)
         end
     end)
 end
-EnableDragToggle()
 
--- ── Main Window ───────────────────────────────────────────
-local MainFrame = Instance.new("Frame", ScreenGui)
-MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 500, 0, 320)
-MainFrame.Position = UDim2.new(0.5, -250, 0.5, -160)
-MainFrame.BackgroundColor3 = Theme.Background
-MainFrame.BackgroundTransparency = 0.05
-MainFrame.Active = true
-MainFrame.ZIndex = 5
-Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
-local mainStroke = Instance.new("UIStroke", MainFrame)
-mainStroke.Color = Theme.Stroke
-mainStroke.Transparency = 0.3
-mainStroke.Thickness = 1
+-- ── Main window ───────────────────────────────────────────
+local Win = Instance.new("Frame", ScreenGui)
+Win.Name              = "MainWindow"
+Win.Size              = UDim2.fromOffset(520, 320)
+Win.Position          = UDim2.new(0.5, -260, 0.5, -160)
+Win.BackgroundColor3  = T.Bg
+Win.BackgroundTransparency = 0.05
+Win.Active            = true
+Win.ClipsDescendants  = false
+Win.ZIndex            = 5
+Instance.new("UICorner", Win).CornerRadius = UDim.new(0, 10)
+local ws = Instance.new("UIStroke", Win)
+ws.Color = T.Stroke; ws.Thickness = 1; ws.Transparency = 0.4
 
--- Shadow effect
-local Shadow = Instance.new("ImageLabel", MainFrame)
-Shadow.Size = UDim2.new(1, 30, 1, 30)
-Shadow.Position = UDim2.new(0, -15, 0, -15)
-Shadow.BackgroundTransparency = 1
-Shadow.Image = "rbxassetid://1316045217"
-Shadow.ImageColor3 = Color3.new(0, 0, 0)
-Shadow.ImageTransparency = 0.6
-Shadow.ZIndex = 4
-Shadow.ScaleType = Enum.ScaleType.Slice
-Shadow.SliceCenter = Rect.new(10, 10, 118, 118)
+-- ── Top bar ───────────────────────────────────────────────
+local Bar = Instance.new("Frame", Win)
+Bar.Size             = UDim2.new(1, 0, 0, 32)
+Bar.BackgroundColor3 = T.Sidebar
+Bar.BorderSizePixel  = 0
+Bar.ZIndex           = 6
+do  -- only round top corners
+    local c = Instance.new("UICorner", Bar)
+    c.CornerRadius = UDim.new(0, 10)
+    local fix = Instance.new("Frame", Bar)
+    fix.Size = UDim2.new(1, 0, 0.5, 0)
+    fix.Position = UDim2.new(0, 0, 0.5, 0)
+    fix.BackgroundColor3 = T.Sidebar
+    fix.BorderSizePixel = 0
+    fix.ZIndex = 6
+end
 
--- ── Top Bar ───────────────────────────────────────────────
-local TopBar = Instance.new("Frame", MainFrame)
-TopBar.Size = UDim2.new(1, 0, 0, 34)
-TopBar.BackgroundColor3 = Theme.Sidebar
-TopBar.BackgroundTransparency = 0.5
-TopBar.ZIndex = 6
-Instance.new("UICorner", TopBar).CornerRadius = UDim.new(0, 10)
+-- Accent pill on title bar
+local pill = Instance.new("Frame", Bar)
+pill.Size = UDim2.fromOffset(3, 18)
+pill.Position = UDim2.new(0, 10, 0.5, -9)
+pill.BackgroundColor3 = T.Accent
+pill.ZIndex = 7
+Instance.new("UICorner", pill).CornerRadius = UDim.new(1, 0)
 
--- Fix corners so only top is rounded
-local TopBarBottom = Instance.new("Frame", TopBar)
-TopBarBottom.Size = UDim2.new(1, 0, 0.5, 0)
-TopBarBottom.Position = UDim2.new(0, 0, 0.5, 0)
-TopBarBottom.BackgroundColor3 = Theme.Sidebar
-TopBarBottom.BackgroundTransparency = 0.5
-TopBarBottom.BorderSizePixel = 0
-TopBarBottom.ZIndex = 6
+local TitleLbl = Instance.new("TextLabel", Bar)
+TitleLbl.Size              = UDim2.new(0.7, 0, 1, 0)
+TitleLbl.Position          = UDim2.new(0, 18, 0, 0)
+TitleLbl.BackgroundTransparency = 1
+TitleLbl.Text              = "🎣  FishIt Omega Hub  |  v1.0"
+TitleLbl.Font              = Enum.Font.GothamBold
+TitleLbl.TextColor3        = T.Text
+TitleLbl.TextSize          = 12
+TitleLbl.TextXAlignment    = Enum.TextXAlignment.Left
+TitleLbl.ZIndex            = 7
 
--- Accent line
-local AccentLine = Instance.new("Frame", TopBar)
-AccentLine.Size = UDim2.new(0, 3, 0.7, 0)
-AccentLine.Position = UDim2.new(0, 10, 0.15, 0)
-AccentLine.BackgroundColor3 = Theme.Accent
-AccentLine.BorderSizePixel = 0
-AccentLine.ZIndex = 7
-Instance.new("UICorner", AccentLine).CornerRadius = UDim.new(1, 0)
+-- Ping display (hidden by default)
+local PingLbl = Instance.new("TextLabel", Bar)
+PingLbl.Size           = UDim2.new(0.2, 0, 1, 0)
+PingLbl.Position       = UDim2.new(0.58, 0, 0, 0)
+PingLbl.BackgroundTransparency = 1
+PingLbl.Text           = ""
+PingLbl.Font           = Enum.Font.Gotham
+PingLbl.TextColor3     = T.Accent
+PingLbl.TextSize       = 10
+PingLbl.ZIndex         = 7
+PingLbl.Visible        = false
 
-local TitleLabel = Instance.new("TextLabel", TopBar)
-TitleLabel.Size = UDim2.new(0.6, 0, 1, 0)
-TitleLabel.Position = UDim2.new(0, 18, 0, 0)
-TitleLabel.Text = "🎣  FishIt Omega Hub  |  v1.0"
-TitleLabel.Font = Enum.Font.GothamBold
-TitleLabel.TextColor3 = Theme.Text
-TitleLabel.TextSize = 12
-TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
-TitleLabel.BackgroundTransparency = 1
-TitleLabel.ZIndex = 7
-
--- Ping label
-pingLabel = Instance.new("TextLabel", TopBar)
-pingLabel.Size = UDim2.new(0.2, 0, 1, 0)
-pingLabel.Position = UDim2.new(0.55, 0, 0, 0)
-pingLabel.Text = ""
-pingLabel.Font = Enum.Font.Gotham
-pingLabel.TextColor3 = Theme.Accent
-pingLabel.TextSize = 10
-pingLabel.TextXAlignment = Enum.TextXAlignment.Right
-pingLabel.BackgroundTransparency = 1
-pingLabel.ZIndex = 7
-pingLabel.Visible = false
-
--- Window Controls
-local function addControl(txt, posX, col, cb)
-    local b = Instance.new("TextButton", TopBar)
-    b.Size = UDim2.new(0, 28, 0, 22)
-    b.Position = UDim2.new(1, posX, 0.5, -11)
+-- Close / minimize buttons
+local function makeCtrl(txt, offsetX, col, cb)
+    local b = Instance.new("TextButton", Bar)
+    b.Size = UDim2.fromOffset(26, 20)
+    b.Position = UDim2.new(1, offsetX, 0.5, -10)
     b.BackgroundTransparency = 1
-    b.Text = txt
-    b.TextColor3 = col
-    b.Font = Enum.Font.GothamMedium
-    b.TextSize = 13
+    b.Text = txt; b.TextColor3 = col
+    b.Font = Enum.Font.GothamBold; b.TextSize = 13
     b.ZIndex = 8
     b.MouseButton1Click:Connect(cb)
     return b
 end
-
-addControl("✕", -32, Theme.Danger, function() ScreenGui:Destroy() end)
-addControl("—", -64, Theme.SubText, function()
-    MainFrame.Visible = false
-    ToggleIcon.Visible = true
+makeCtrl("✕", -30, T.Danger, function() ScreenGui:Destroy() end)
+makeCtrl("—", -60, T.Sub, function()
+    Win.Visible = false; MinBtn.Visible = true
+end)
+MinBtn.MouseButton1Click:Connect(function()
+    Win.Visible = true; MinBtn.Visible = false
 end)
 
-ToggleIcon.MouseButton1Click:Connect(function()
-    MainFrame.Visible = true
-    ToggleIcon.Visible = false
-end)
-
--- ── Drag ──────────────────────────────────────────────────
-local function enableDrag(frame, handle)
-    local drag, start, startPos
-    handle.InputBegan:Connect(function(i)
+-- Drag window
+do
+    local dragging, dStart, dOrigin
+    Bar.InputBegan:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            drag = true; start = i.Position; startPos = frame.Position
+            dragging = true; dStart = i.Position; dOrigin = Win.Position
             i.Changed:Connect(function()
-                if i.UserInputState == Enum.UserInputState.End then drag = false end
+                if i.UserInputState == Enum.UserInputState.End then dragging = false end
             end)
         end
     end)
     UserInputService.InputChanged:Connect(function(i)
-        if drag and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
-            local d = i.Position - start
-            frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + d.X, startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
+            local d = i.Position - dStart
+            Win.Position = UDim2.new(dOrigin.X.Scale, dOrigin.X.Offset+d.X, dOrigin.Y.Scale, dOrigin.Y.Offset+d.Y)
         end
     end)
 end
-enableDrag(MainFrame, TopBar)
 
 -- ── Sidebar ───────────────────────────────────────────────
-local Sidebar = Instance.new("Frame", MainFrame)
-Sidebar.Size = UDim2.new(0, 100, 1, -34)
-Sidebar.Position = UDim2.new(0, 0, 0, 34)
-Sidebar.BackgroundColor3 = Theme.Sidebar
-Sidebar.BackgroundTransparency = 0.4
-Sidebar.BorderSizePixel = 0
-Sidebar.ZIndex = 6
+-- NOTE: ONLY tab buttons go inside sidebar — no extra frames!
+local Sidebar = Instance.new("ScrollingFrame", Win)
+Sidebar.Size                = UDim2.new(0, 95, 1, -32)
+Sidebar.Position            = UDim2.new(0, 0, 0, 32)
+Sidebar.BackgroundColor3    = T.Sidebar
+Sidebar.BorderSizePixel     = 0
+Sidebar.ScrollBarThickness  = 0
+Sidebar.CanvasSize          = UDim2.new(0, 0, 0, 0)
+Sidebar.AutomaticCanvasSize = Enum.AutomaticSize.Y
+Sidebar.ZIndex              = 6
 
-local SidebarCorner = Instance.new("UICorner", Sidebar)
-SidebarCorner.CornerRadius = UDim.new(0, 10)
--- Fix top corners
-local SidebarTop = Instance.new("Frame", Sidebar)
-SidebarTop.Size = UDim2.new(1, 0, 0, 10)
-SidebarTop.BackgroundColor3 = Theme.Sidebar
-SidebarTop.BackgroundTransparency = 0.4
-SidebarTop.BorderSizePixel = 0
-SidebarTop.ZIndex = 6
+local sbLayout = Instance.new("UIListLayout", Sidebar)
+sbLayout.Padding            = UDim.new(0, 3)
+sbLayout.HorizontalAlignment= Enum.HorizontalAlignment.Center
+sbLayout.SortOrder          = Enum.SortOrder.LayoutOrder
+local sbPad = Instance.new("UIPadding", Sidebar)
+sbPad.PaddingTop = UDim.new(0, 8)
 
--- Right panel fix (remove right rounding)
-local SidebarRight = Instance.new("Frame", Sidebar)
-SidebarRight.Size = UDim2.new(0, 10, 1, 0)
-SidebarRight.Position = UDim2.new(1, -10, 0, 0)
-SidebarRight.BackgroundColor3 = Theme.Sidebar
-SidebarRight.BackgroundTransparency = 0.4
-SidebarRight.BorderSizePixel = 0
-SidebarRight.ZIndex = 6
+-- ── Content area ──────────────────────────────────────────
+local Content = Instance.new("Frame", Win)
+Content.Size               = UDim2.new(1, -98, 1, -32)
+Content.Position           = UDim2.new(0, 98, 0, 32)
+Content.BackgroundTransparency = 1
+Content.ClipsDescendants   = false
+Content.ZIndex             = 6
 
-local SidebarLayout = Instance.new("UIListLayout", Sidebar)
-SidebarLayout.Padding = UDim.new(0, 4)
-SidebarLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-SidebarLayout.SortOrder = Enum.SortOrder.LayoutOrder
-Instance.new("UIPadding", Sidebar).PaddingTop = UDim.new(0, 8)
+-- Divider line between sidebar and content
+local divider = Instance.new("Frame", Win)
+divider.Size             = UDim2.fromOffset(1, 288)
+divider.Position         = UDim2.new(0, 96, 0, 32)
+divider.BackgroundColor3 = T.Stroke
+divider.BorderSizePixel  = 0
+divider.ZIndex           = 7
 
--- ── Content Area ──────────────────────────────────────────
-local ContentArea = Instance.new("Frame", MainFrame)
-ContentArea.Size = UDim2.new(1, -108, 1, -34)
-ContentArea.Position = UDim2.new(0, 105, 0, 34)
-ContentArea.BackgroundTransparency = 1
-ContentArea.ZIndex = 6
+-- ── Tab factory ───────────────────────────────────────────
+local allTabs    = {}   -- {frame, name}
+local allTabBtns = {}   -- {btn, indicator}
+local activeTab  = nil
 
--- ── Tab System ────────────────────────────────────────────
-local Tabs = {}
-local TabButtons = {}
-
-local function createTab(name, icon, order)
-    local TabFrame = Instance.new("ScrollingFrame", ContentArea)
-    TabFrame.Size = UDim2.new(1, -5, 1, -8)
-    TabFrame.Position = UDim2.new(0, 0, 0, 4)
-    TabFrame.BackgroundTransparency = 1
-    TabFrame.ScrollBarThickness = 2
-    TabFrame.ScrollBarImageColor3 = Theme.Accent
-    TabFrame.Visible = false
-    TabFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
-    TabFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-    TabFrame.BorderSizePixel = 0
-    TabFrame.ZIndex = 6
-
-    local Layout = Instance.new("UIListLayout", TabFrame)
-    Layout.Padding = UDim.new(0, 6)
-    Layout.SortOrder = Enum.SortOrder.LayoutOrder
-    local Padding = Instance.new("UIPadding", TabFrame)
-    Padding.PaddingTop = UDim.new(0, 4)
-    Padding.PaddingRight = UDim.new(0, 4)
-
-    local TabBtn = Instance.new("TextButton", Sidebar)
-    TabBtn.Size = UDim2.new(0.9, 0, 0, 28)
-    TabBtn.BackgroundColor3 = Theme.Accent
-    TabBtn.BackgroundTransparency = 1
-    TabBtn.Text = icon .. " " .. name
-    TabBtn.TextColor3 = Theme.SubText
-    TabBtn.Font = Enum.Font.GothamMedium
-    TabBtn.TextSize = 11
-    TabBtn.TextXAlignment = Enum.TextXAlignment.Left
-    TabBtn.LayoutOrder = order
-    TabBtn.ZIndex = 7
-    Instance.new("UICorner", TabBtn).CornerRadius = UDim.new(0, 5)
-
-    local Indicator = Instance.new("Frame", TabBtn)
-    Indicator.Size = UDim2.new(0, 3, 0.55, 0)
-    Indicator.Position = UDim2.new(0, 3, 0.225, 0)
-    Indicator.BackgroundColor3 = Theme.Accent
-    Indicator.Visible = false
-    Indicator.ZIndex = 8
-    Instance.new("UICorner", Indicator).CornerRadius = UDim.new(1, 0)
-
-    local UIPadBtn = Instance.new("UIPadding", TabBtn)
-    UIPadBtn.PaddingLeft = UDim.new(0, 8)
-
-    TabBtn.MouseButton1Click:Connect(function()
-        for _, t in pairs(Tabs) do t.Frame.Visible = false end
-        for _, b in pairs(TabButtons) do
-            b.Btn.BackgroundTransparency = 1
-            b.Btn.TextColor3 = Theme.SubText
-            b.Indicator.Visible = false
-        end
-        TabFrame.Visible = true
-        TabBtn.BackgroundTransparency = 0.82
-        TabBtn.TextColor3 = Theme.Text
-        Indicator.Visible = true
-    end)
-
-    table.insert(Tabs, {Frame = TabFrame, Name = name})
-    table.insert(TabButtons, {Btn = TabBtn, Indicator = Indicator})
-    return TabFrame
+local function selectTab(idx)
+    for i, t in ipairs(allTabs) do
+        t.Frame.Visible = (i == idx)
+    end
+    for i, b in ipairs(allTabBtns) do
+        b.Btn.BackgroundTransparency = (i == idx) and 0.75 or 1
+        b.Btn.TextColor3             = (i == idx) and T.Text or T.Sub
+        b.Indicator.Visible          = (i == idx)
+    end
+    activeTab = idx
 end
 
--- ── UI Components ─────────────────────────────────────────
+local function newTab(icon, label, order)
+    -- Content scroll frame
+    local sf = Instance.new("ScrollingFrame", Content)
+    sf.Size                = UDim2.new(1, 0, 1, -6)
+    sf.Position            = UDim2.new(0, 0, 0, 4)
+    sf.BackgroundTransparency = 1
+    sf.ScrollBarThickness  = 3
+    sf.ScrollBarImageColor3= T.Accent
+    sf.Visible             = false
+    sf.AutomaticCanvasSize = Enum.AutomaticSize.Y
+    sf.CanvasSize          = UDim2.new(0,0,0,0)
+    sf.BorderSizePixel     = 0
+    sf.ZIndex              = 7
+    sf.ClipsDescendants    = true
 
-local function createSection(parent, title, order)
-    local section = Instance.new("TextLabel", parent)
-    section.Size = UDim2.new(0.98, 0, 0, 18)
-    section.BackgroundColor3 = Theme.AccentDark
-    section.BackgroundTransparency = 0.7
-    section.Text = "  " .. title
-    section.Font = Enum.Font.GothamBold
-    section.TextColor3 = Theme.Accent
-    section.TextSize = 10
-    section.TextXAlignment = Enum.TextXAlignment.Left
-    section.LayoutOrder = order or 0
-    section.ZIndex = 7
-    Instance.new("UICorner", section).CornerRadius = UDim.new(0, 4)
-    return section
+    local fl = Instance.new("UIListLayout", sf)
+    fl.Padding   = UDim.new(0, 5)
+    fl.SortOrder = Enum.SortOrder.LayoutOrder
+    local fp = Instance.new("UIPadding", sf)
+    fp.PaddingTop   = UDim.new(0, 4)
+    fp.PaddingRight = UDim.new(0, 6)
+
+    -- Sidebar button
+    local btn = Instance.new("TextButton", Sidebar)
+    btn.Size                = UDim2.new(0.92, 0, 0, 26)
+    btn.BackgroundColor3    = T.Accent
+    btn.BackgroundTransparency = 1
+    btn.Text                = icon.."  "..label
+    btn.TextColor3          = T.Sub
+    btn.Font                = Enum.Font.GothamMedium
+    btn.TextSize            = 11
+    btn.TextXAlignment      = Enum.TextXAlignment.Left
+    btn.LayoutOrder         = order
+    btn.ZIndex              = 7
+    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+    local bpad = Instance.new("UIPadding", btn)
+    bpad.PaddingLeft = UDim.new(0, 7)
+
+    local ind = Instance.new("Frame", btn)
+    ind.Size             = UDim2.fromOffset(3, 14)
+    ind.Position         = UDim2.new(0, 2, 0.5, -7)
+    ind.BackgroundColor3 = T.Accent
+    ind.Visible          = false
+    ind.ZIndex           = 8
+    Instance.new("UICorner", ind).CornerRadius = UDim.new(1, 0)
+
+    local idx = #allTabs + 1
+    table.insert(allTabs,    {Frame = sf, Name = label})
+    table.insert(allTabBtns, {Btn = btn, Indicator = ind})
+
+    btn.MouseButton1Click:Connect(function() selectTab(idx) end)
+    return sf
 end
 
-local function createToggle(parent, title, desc, defaultState, callback, order)
-    local state = defaultState or false
-    local btn = Instance.new("TextButton", parent)
-    btn.Size = UDim2.new(0.98, 0, 0, 42)
-    btn.BackgroundColor3 = Theme.Button
-    btn.Text = ""
-    btn.AutoButtonColor = false
-    btn.LayoutOrder = order or 0
-    btn.ZIndex = 7
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-    local stroke = Instance.new("UIStroke", btn)
-    stroke.Color = Theme.Stroke
-    stroke.Thickness = 1
+-- ── Component helpers ─────────────────────────────────────
 
-    local Txt = Instance.new("TextLabel", btn)
-    Txt.Size = UDim2.new(0.72, 0, 0.55, 0)
-    Txt.Position = UDim2.new(0, 10, 0, 4)
-    Txt.Text = title
-    Txt.Font = Enum.Font.GothamMedium
-    Txt.TextColor3 = Theme.Text
-    Txt.TextSize = 12
-    Txt.TextXAlignment = Enum.TextXAlignment.Left
-    Txt.BackgroundTransparency = 1
-    Txt.ZIndex = 8
+-- Section header
+local function mkSection(parent, text, order)
+    local f = Instance.new("Frame", parent)
+    f.Size             = UDim2.new(0.98, 0, 0, 20)
+    f.BackgroundColor3 = T.Sidebar
+    f.BackgroundTransparency = 0.4
+    f.LayoutOrder      = order or 0
+    f.ZIndex           = 8
+    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 4)
+    local lbl = Instance.new("TextLabel", f)
+    lbl.Size = UDim2.new(1, -8, 1, 0)
+    lbl.Position = UDim2.new(0, 8, 0, 0)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = text
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextColor3 = T.Accent
+    lbl.TextSize = 10
+    lbl.TextXAlignment = Enum.TextXAlignment.Left
+    lbl.ZIndex = 9
+    return f
+end
+
+-- Toggle with animated knob
+local function mkToggle(parent, title, desc, default, cb, order)
+    local state = default or false
+    local row = Instance.new("TextButton", parent)
+    row.Size             = UDim2.new(0.98, 0, 0, desc~="" and 40 or 32)
+    row.BackgroundColor3 = T.Btn
+    row.Text             = ""
+    row.AutoButtonColor  = false
+    row.LayoutOrder      = order or 0
+    row.ZIndex           = 8
+    Instance.new("UICorner", row).CornerRadius = UDim.new(0, 6)
+    local rstr = Instance.new("UIStroke", row)
+    rstr.Color = T.Stroke; rstr.Thickness = 1
+
+    local titleLbl = Instance.new("TextLabel", row)
+    titleLbl.Size = UDim2.new(0.72, 0, desc~="" and 0.55 or 1, 0)
+    titleLbl.Position = UDim2.new(0, 10, 0, 0)
+    titleLbl.BackgroundTransparency = 1
+    titleLbl.Text = title
+    titleLbl.Font = Enum.Font.GothamMedium
+    titleLbl.TextColor3 = T.Text
+    titleLbl.TextSize = 12
+    titleLbl.TextXAlignment = Enum.TextXAlignment.Left
+    titleLbl.ZIndex = 9
 
     if desc and desc ~= "" then
-        local Sub = Instance.new("TextLabel", btn)
-        Sub.Size = UDim2.new(0.72, 0, 0.45, 0)
-        Sub.Position = UDim2.new(0, 10, 0.55, 0)
-        Sub.Text = desc
-        Sub.Font = Enum.Font.Gotham
-        Sub.TextColor3 = Theme.SubText
-        Sub.TextSize = 9
-        Sub.TextXAlignment = Enum.TextXAlignment.Left
-        Sub.BackgroundTransparency = 1
-        Sub.ZIndex = 8
+        local sub = Instance.new("TextLabel", row)
+        sub.Size = UDim2.new(0.72, 0, 0.45, 0)
+        sub.Position = UDim2.new(0, 10, 0.55, 0)
+        sub.BackgroundTransparency = 1
+        sub.Text = desc
+        sub.Font = Enum.Font.Gotham
+        sub.TextColor3 = T.Sub
+        sub.TextSize = 9
+        sub.TextXAlignment = Enum.TextXAlignment.Left
+        sub.ZIndex = 9
     end
 
-    local Pill = Instance.new("Frame", btn)
-    Pill.Size = UDim2.new(0, 38, 0, 18)
-    Pill.Position = UDim2.new(1, -48, 0.5, -9)
-    Pill.BackgroundColor3 = state and Theme.Accent or Theme.Background
-    Pill.ZIndex = 8
-    Instance.new("UICorner", Pill).CornerRadius = UDim.new(1, 0)
-    local pillStroke = Instance.new("UIStroke", Pill)
-    pillStroke.Color = state and Theme.Accent or Theme.Stroke
+    -- Pill track
+    local track = Instance.new("Frame", row)
+    track.Size             = UDim2.fromOffset(36, 18)
+    track.Position         = UDim2.new(1, -46, 0.5, -9)
+    track.BackgroundColor3 = state and T.Accent or T.Btn
+    track.ZIndex           = 9
+    Instance.new("UICorner", track).CornerRadius = UDim.new(1, 0)
+    local tstr = Instance.new("UIStroke", track)
+    tstr.Color = state and T.Accent or T.Stroke; tstr.Thickness = 1
 
-    local Knob = Instance.new("Frame", Pill)
-    Knob.Size = UDim2.new(0, 12, 0, 12)
-    Knob.Position = state and UDim2.new(1, -15, 0.5, -6) or UDim2.new(0, 3, 0.5, -6)
-    Knob.BackgroundColor3 = state and Color3.new(1,1,1) or Theme.SubText
-    Knob.ZIndex = 9
-    Instance.new("UICorner", Knob).CornerRadius = UDim.new(1, 0)
+    -- Knob
+    local knob = Instance.new("Frame", track)
+    knob.Size             = UDim2.fromOffset(12, 12)
+    knob.Position         = state and UDim2.new(1,-14,0.5,-6) or UDim2.new(0,2,0.5,-6)
+    knob.BackgroundColor3 = state and Color3.new(1,1,1) or T.Sub
+    knob.ZIndex           = 10
+    Instance.new("UICorner", knob).CornerRadius = UDim.new(1, 0)
 
-    local function update(s)
-        TweenService:Create(Knob, TweenInfo.new(0.15), {
-            Position = s and UDim2.new(1,-15,0.5,-6) or UDim2.new(0,3,0.5,-6),
-            BackgroundColor3 = s and Color3.new(1,1,1) or Theme.SubText
+    local function refresh(s)
+        TweenService:Create(knob, TweenInfo.new(0.15), {
+            Position = s and UDim2.new(1,-14,0.5,-6) or UDim2.new(0,2,0.5,-6),
+            BackgroundColor3 = s and Color3.new(1,1,1) or T.Sub,
         }):Play()
-        TweenService:Create(Pill, TweenInfo.new(0.15), {
-            BackgroundColor3 = s and Theme.Accent or Theme.Background
+        TweenService:Create(track, TweenInfo.new(0.15), {
+            BackgroundColor3 = s and T.Accent or T.Btn,
         }):Play()
-        pillStroke.Color = s and Theme.Accent or Theme.Stroke
-        btn.BackgroundColor3 = s and Color3.fromRGB(28, 40, 36) or Theme.Button
+        tstr.Color = s and T.Accent or T.Stroke
+        row.BackgroundColor3 = s and Color3.fromRGB(22, 40, 32) or T.Btn
+        rstr.Color = s and T.Accent or T.Stroke
     end
+    refresh(state)
 
-    btn.MouseButton1Click:Connect(function()
+    row.MouseButton1Click:Connect(function()
         state = not state
-        update(state)
-        callback(state)
+        refresh(state)
+        cb(state)
     end)
 
-    update(state)
-    return btn, function(s) state = s update(s) end
+    -- Return setter so external code can flip it
+    return row, function(s) state = s refresh(s) end
 end
 
-local function createButton(parent, title, col, callback, order)
+-- Button
+local function mkBtn(parent, text, accent, cb, order)
     local btn = Instance.new("TextButton", parent)
-    btn.Size = UDim2.new(0.98, 0, 0, 32)
-    btn.BackgroundColor3 = col or Theme.Button
-    btn.Text = title
-    btn.TextColor3 = Theme.Text
-    btn.Font = Enum.Font.GothamMedium
-    btn.TextSize = 12
-    btn.AutoButtonColor = false
-    btn.LayoutOrder = order or 0
-    btn.ZIndex = 7
+    btn.Size             = UDim2.new(0.98, 0, 0, 30)
+    btn.BackgroundColor3 = accent and T.AccentDim or T.Btn
+    btn.Text             = text
+    btn.TextColor3       = T.Text
+    btn.Font             = Enum.Font.GothamMedium
+    btn.TextSize         = 11
+    btn.AutoButtonColor  = false
+    btn.LayoutOrder      = order or 0
+    btn.ZIndex           = 8
     Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-    Instance.new("UIStroke", btn).Color = col and col or Theme.Stroke
+    Instance.new("UIStroke", btn).Color = accent and T.Accent or T.Stroke
 
     btn.MouseEnter:Connect(function()
-        TweenService:Create(btn, TweenInfo.new(0.1), {BackgroundTransparency = 0.2}):Play()
+        TweenService:Create(btn, TweenInfo.new(0.1), {BackgroundTransparency = 0.25}):Play()
     end)
     btn.MouseLeave:Connect(function()
         TweenService:Create(btn, TweenInfo.new(0.1), {BackgroundTransparency = 0}):Play()
     end)
-    btn.MouseButton1Click:Connect(callback)
+    btn.MouseButton1Click:Connect(cb)
     return btn
 end
 
-local function createInput(parent, placeholder, default, callback, order)
-    local frame = Instance.new("Frame", parent)
-    frame.Size = UDim2.new(0.98, 0, 0, 32)
-    frame.BackgroundColor3 = Theme.Button
-    frame.LayoutOrder = order or 0
-    frame.ZIndex = 7
-    Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 6)
-    Instance.new("UIStroke", frame).Color = Theme.Stroke
+-- Text input
+local function mkInput(parent, hint, default, cb, order)
+    local f = Instance.new("Frame", parent)
+    f.Size             = UDim2.new(0.98, 0, 0, 30)
+    f.BackgroundColor3 = T.Btn
+    f.LayoutOrder      = order or 0
+    f.ZIndex           = 8
+    Instance.new("UICorner", f).CornerRadius = UDim.new(0, 6)
+    Instance.new("UIStroke", f).Color = T.Stroke
 
-    local box = Instance.new("TextBox", frame)
+    local box = Instance.new("TextBox", f)
     box.Size = UDim2.new(1, -16, 1, 0)
     box.Position = UDim2.new(0, 8, 0, 0)
     box.BackgroundTransparency = 1
+    box.PlaceholderText = hint or ""
+    box.PlaceholderColor3 = T.Sub
     box.Text = default or ""
-    box.PlaceholderText = placeholder or ""
-    box.PlaceholderColor3 = Theme.SubText
-    box.TextColor3 = Theme.Text
+    box.TextColor3 = T.Text
     box.Font = Enum.Font.Gotham
     box.TextSize = 11
     box.TextXAlignment = Enum.TextXAlignment.Left
     box.ClearTextOnFocus = false
-    box.ZIndex = 8
-
-    box.FocusLost:Connect(function()
-        if callback then callback(box.Text) end
-    end)
-    return frame, box
+    box.ZIndex = 9
+    if cb then box.FocusLost:Connect(function() cb(box.Text) end) end
+    return f, box
 end
 
-local function createStatusRow(parent, label, valueDefault, order)
-    local frame = Instance.new("Frame", parent)
-    frame.Size = UDim2.new(0.98, 0, 0, 22)
-    frame.BackgroundTransparency = 1
-    frame.LayoutOrder = order or 0
-    frame.ZIndex = 7
+-- Status row  (label : value)
+local function mkStatusRow(parent, label, default, order)
+    local f = Instance.new("Frame", parent)
+    f.Size = UDim2.new(0.98, 0, 0, 20)
+    f.BackgroundTransparency = 1
+    f.LayoutOrder = order or 0
+    f.ZIndex = 8
 
-    local lbl = Instance.new("TextLabel", frame)
-    lbl.Size = UDim2.new(0.5, 0, 1, 0)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = label
-    lbl.Font = Enum.Font.Gotham
-    lbl.TextColor3 = Theme.SubText
-    lbl.TextSize = 10
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.ZIndex = 8
+    local l = Instance.new("TextLabel", f)
+    l.Size = UDim2.new(0.55, 0, 1, 0)
+    l.BackgroundTransparency = 1
+    l.Text = label
+    l.Font = Enum.Font.Gotham
+    l.TextColor3 = T.Sub
+    l.TextSize = 10
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.ZIndex = 9
 
-    local val = Instance.new("TextLabel", frame)
-    val.Size = UDim2.new(0.5, 0, 1, 0)
-    val.Position = UDim2.new(0.5, 0, 0, 0)
-    val.BackgroundTransparency = 1
-    val.Text = valueDefault or "—"
-    val.Font = Enum.Font.GothamMedium
-    val.TextColor3 = Theme.Accent
-    val.TextSize = 10
-    val.TextXAlignment = Enum.TextXAlignment.Right
-    val.ZIndex = 8
+    local v = Instance.new("TextLabel", f)
+    v.Size = UDim2.new(0.45, 0, 1, 0)
+    v.Position = UDim2.new(0.55, 0, 0, 0)
+    v.BackgroundTransparency = 1
+    v.Text = default or "—"
+    v.Font = Enum.Font.GothamMedium
+    v.TextColor3 = T.Accent
+    v.TextSize = 10
+    v.TextXAlignment = Enum.TextXAlignment.Right
+    v.ZIndex = 9
 
-    return frame, val
+    return f, v
 end
 
-local function createDropdown(parent, label, options, default, callback, order)
-    local current = default or options[1]
-    local open = false
+-- Small label
+local function mkLabel(parent, text, col, order)
+    local l = Instance.new("TextLabel", parent)
+    l.Size = UDim2.new(0.98, 0, 0, 18)
+    l.BackgroundTransparency = 1
+    l.Text = text
+    l.Font = Enum.Font.Gotham
+    l.TextColor3 = col or T.Sub
+    l.TextSize = 10
+    l.TextXAlignment = Enum.TextXAlignment.Left
+    l.LayoutOrder = order or 0
+    l.ZIndex = 8
+    return l
+end
 
-    local container = Instance.new("Frame", parent)
-    container.Size = UDim2.new(0.98, 0, 0, 32)
-    container.BackgroundColor3 = Theme.Button
-    container.LayoutOrder = order or 0
-    container.ZIndex = 7
-    container.ClipsDescendants = false
-    Instance.new("UICorner", container).CornerRadius = UDim.new(0, 6)
-    Instance.new("UIStroke", container).Color = Theme.Stroke
+-- Dropdown
+local function mkDropdown(parent, label, opts, default, cb, order)
+    local cur = default or opts[1]
 
-    local headerBtn = Instance.new("TextButton", container)
-    headerBtn.Size = UDim2.new(1, 0, 0, 32)
-    headerBtn.BackgroundTransparency = 1
-    headerBtn.ZIndex = 8
+    local holder = Instance.new("Frame", parent)
+    holder.Size = UDim2.new(0.98, 0, 0, 30)
+    holder.BackgroundTransparency = 1
+    holder.LayoutOrder = order or 0
+    holder.ZIndex = 8
+    holder.ClipsDescendants = false
 
-    local labelTxt = Instance.new("TextLabel", headerBtn)
-    labelTxt.Size = UDim2.new(0.5, 0, 1, 0)
-    labelTxt.Position = UDim2.new(0, 8, 0, 0)
-    labelTxt.Text = label
-    labelTxt.Font = Enum.Font.GothamMedium
-    labelTxt.TextColor3 = Theme.Text
-    labelTxt.TextSize = 11
-    labelTxt.TextXAlignment = Enum.TextXAlignment.Left
-    labelTxt.BackgroundTransparency = 1
-    labelTxt.ZIndex = 9
+    local header = Instance.new("TextButton", holder)
+    header.Size = UDim2.new(1, 0, 0, 30)
+    header.BackgroundColor3 = T.Btn
+    header.ZIndex = 9
+    Instance.new("UICorner", header).CornerRadius = UDim.new(0, 6)
+    Instance.new("UIStroke", header).Color = T.Stroke
 
-    local valueTxt = Instance.new("TextLabel", headerBtn)
-    valueTxt.Size = UDim2.new(0.45, 0, 1, 0)
-    valueTxt.Position = UDim2.new(0.5, 0, 0, 0)
-    valueTxt.Text = current .. " ▾"
-    valueTxt.Font = Enum.Font.Gotham
-    valueTxt.TextColor3 = Theme.Accent
-    valueTxt.TextSize = 10
-    valueTxt.TextXAlignment = Enum.TextXAlignment.Right
-    valueTxt.BackgroundTransparency = 1
-    valueTxt.ZIndex = 9
+    local lLbl = Instance.new("TextLabel", header)
+    lLbl.Size = UDim2.new(0.5, 0, 1, 0)
+    lLbl.Position = UDim2.new(0, 8, 0, 0)
+    lLbl.BackgroundTransparency = 1
+    lLbl.Text = label
+    lLbl.Font = Enum.Font.GothamMedium
+    lLbl.TextColor3 = T.Text
+    lLbl.TextSize = 11
+    lLbl.TextXAlignment = Enum.TextXAlignment.Left
+    lLbl.ZIndex = 10
 
-    local dropFrame = Instance.new("Frame", container)
-    dropFrame.Size = UDim2.new(1, 0, 0, #options * 24)
-    dropFrame.Position = UDim2.new(0, 0, 1, 2)
-    dropFrame.BackgroundColor3 = Theme.Background
-    dropFrame.Visible = false
-    dropFrame.ZIndex = 20
-    Instance.new("UICorner", dropFrame).CornerRadius = UDim.new(0, 6)
-    Instance.new("UIStroke", dropFrame).Color = Theme.Accent
+    local vLbl = Instance.new("TextLabel", header)
+    vLbl.Size = UDim2.new(0.46, 0, 1, 0)
+    vLbl.Position = UDim2.new(0.52, 0, 0, 0)
+    vLbl.BackgroundTransparency = 1
+    vLbl.Text = cur .. "  ▾"
+    vLbl.Font = Enum.Font.Gotham
+    vLbl.TextColor3 = T.Accent
+    vLbl.TextSize = 10
+    vLbl.TextXAlignment = Enum.TextXAlignment.Right
+    vLbl.ZIndex = 10
 
-    local dropLayout = Instance.new("UIListLayout", dropFrame)
-    dropLayout.Padding = UDim.new(0, 0)
+    local isOpen = false
+    local menu = Instance.new("Frame", ScreenGui)  -- parent to ScreenGui so it's never clipped!
+    menu.BackgroundColor3 = T.Bg
+    menu.Size = UDim2.fromOffset(200, #opts * 26 + 4)
+    menu.Visible = false
+    menu.ZIndex = 50
+    menu.ClipsDescendants = false
+    Instance.new("UICorner", menu).CornerRadius = UDim.new(0, 6)
+    local mstr = Instance.new("UIStroke", menu)
+    mstr.Color = T.Accent; mstr.Thickness = 1
 
-    for _, opt in ipairs(options) do
-        local optBtn = Instance.new("TextButton", dropFrame)
-        optBtn.Size = UDim2.new(1, 0, 0, 24)
-        optBtn.BackgroundTransparency = 1
-        optBtn.Text = "  " .. opt
-        optBtn.TextColor3 = opt == current and Theme.Accent or Theme.Text
-        optBtn.Font = Enum.Font.Gotham
-        optBtn.TextSize = 10
-        optBtn.TextXAlignment = Enum.TextXAlignment.Left
-        optBtn.ZIndex = 21
-        optBtn.MouseButton1Click:Connect(function()
-            current = opt
-            valueTxt.Text = opt .. " ▾"
-            dropFrame.Visible = false
-            open = false
-            callback(opt)
+    local mLayout = Instance.new("UIListLayout", menu)
+    mLayout.Padding = UDim.new(0, 0)
+    local mPad = Instance.new("UIPadding", menu)
+    mPad.PaddingTop = UDim.new(0, 2); mPad.PaddingBottom = UDim.new(0, 2)
+
+    for _, opt in ipairs(opts) do
+        local ob = Instance.new("TextButton", menu)
+        ob.Size = UDim2.new(1, 0, 0, 26)
+        ob.BackgroundTransparency = 1
+        ob.Text = "  " .. opt
+        ob.Font = Enum.Font.Gotham
+        ob.TextColor3 = opt == cur and T.Accent or T.Text
+        ob.TextSize = 11
+        ob.TextXAlignment = Enum.TextXAlignment.Left
+        ob.ZIndex = 51
+        ob.MouseButton1Click:Connect(function()
+            cur = opt
+            vLbl.Text = opt .. "  ▾"
+            menu.Visible = false
+            isOpen = false
+            cb(opt)
         end)
     end
 
-    headerBtn.MouseButton1Click:Connect(function()
-        open = not open
-        dropFrame.Visible = open
+    header.MouseButton1Click:Connect(function()
+        isOpen = not isOpen
+        if isOpen then
+            -- Position menu below header in screen space
+            local abs = header.AbsolutePosition
+            local sz  = header.AbsoluteSize
+            menu.Position = UDim2.fromOffset(abs.X, abs.Y + sz.Y + 2)
+            menu.Size     = UDim2.fromOffset(sz.X, #opts * 26 + 4)
+        end
+        menu.Visible = isOpen
     end)
 
-    return container
-end
+    -- Close dropdown when clicking elsewhere
+    UserInputService.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            if isOpen and i.UserInputState == Enum.UserInputState.Begin then
+                task.defer(function()
+                    if isOpen then menu.Visible = false isOpen = false end
+                end)
+            end
+        end
+    end)
 
-local function createLabel(parent, text, color, order)
-    local lbl = Instance.new("TextLabel", parent)
-    lbl.Size = UDim2.new(0.98, 0, 0, 20)
-    lbl.BackgroundTransparency = 1
-    lbl.Text = text
-    lbl.Font = Enum.Font.Gotham
-    lbl.TextColor3 = color or Theme.SubText
-    lbl.TextSize = 10
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.LayoutOrder = order or 0
-    lbl.ZIndex = 7
-    return lbl
+    return holder
 end
 
 -- ============================================================
--- TAB CREATION
+-- CREATE TABS
 -- ============================================================
-
-local TabInfo        = createTab("Info",    "ℹ️",  1)
-local TabFishing     = createTab("Fishing", "🎣",  2)
-local TabAuto        = createTab("Auto",    "⚙️",  3)
-local TabTrading     = createTab("Trading", "🤝",  4)
-local TabMenu        = createTab("Menu",    "📋",  5)
-local TabQuest       = createTab("Quest",   "📜",  6)
-local TabTeleport    = createTab("Teleport","🗺️",  7)
-local TabMisc        = createTab("Misc",    "🔧",  8)
+local TabInfo     = newTab("ℹ️",  "Info",     1)
+local TabFishing  = newTab("🎣",  "Fishing",  2)
+local TabAuto     = newTab("⚙️",  "Auto",     3)
+local TabTrading  = newTab("🤝",  "Trading",  4)
+local TabMenu     = newTab("📋",  "Menu",     5)
+local TabQuest    = newTab("📜",  "Quest",    6)
+local TabTeleport = newTab("🗺️", "Teleport", 7)
+local TabMisc     = newTab("🔧",  "Misc",     8)
 
 -- ============================================================
--- ▶ INFO TAB
+-- ▶  INFO TAB
 -- ============================================================
-local _, pingVal = createStatusRow(TabInfo, "🌐 Ping", "— ms", 1)
-local _, statusVal = createStatusRow(TabInfo, "🎣 Status", "Idle", 2)
-local _, fishCaughtVal = createStatusRow(TabInfo, "🐟 Fish Caught (session)", "0", 3)
-local sessionFishCount = 0
+mkLabel(TabInfo, "🎣  FishIt Omega Hub  v1.0", T.Accent, 1)
+mkLabel(TabInfo, "Built from full game source analysis.", T.Sub, 2)
+mkLabel(TabInfo, "──────────────────────────────────", T.Stroke, 3)
 
-createLabel(TabInfo, "─────────────────────────────", Theme.Stroke, 4)
-createLabel(TabInfo, "🎣 FishIt Omega Hub  |  v1.0", Theme.Accent, 5)
-createLabel(TabInfo, "Built from full game source analysis.", Theme.SubText, 6)
-createLabel(TabInfo, "Supports: Auto Fish, Sell, Favorite, Teleport, Misc.", Theme.SubText, 7)
-createLabel(TabInfo, "⚠️  Use responsibly. Enjoy fishing!", Theme.Warning, 8)
+local _, vPing    = mkStatusRow(TabInfo, "📶  Ping",             "— ms",     4)
+local _, vStatus  = mkStatusRow(TabInfo, "🎣  Status",           "Idle",     5)
+local _, vFish    = mkStatusRow(TabInfo, "🐟  Fish (session)",   "0",        6)
+local _, vBag     = mkStatusRow(TabInfo, "🎒  Bag caught",       "0",        7)
+local _, vPlayers = mkStatusRow(TabInfo, "👥  Players in server","—",        8)
 
--- Ping update loop
+mkLabel(TabInfo, "──────────────────────────────────", T.Stroke, 9)
+mkLabel(TabInfo, "⚠️  Use responsibly & happy fishing!", T.Warn, 10)
+
+-- Live update info
 task.spawn(function()
     while task.wait(2) do
-        if State.ShowRealPing then
-            local stats = game:GetService("Stats")
-            local ping = math.round(stats.Network.ServerStatsItem["Data Ping"]:GetValue())
-            pingLabel.Text = "📶 " .. ping .. "ms"
-            pingVal.Text = ping .. " ms"
+        vFish.Text    = tostring(S.SessionFish)
+        vBag.Text     = tostring(S.DetectorBag)
+        vStatus.Text  = S.DetectorActive and "Auto Fishing 🟢" or "Idle 🔴"
+        vStatus.TextColor3 = S.DetectorActive and T.Good or T.Sub
+        vPlayers.Text = tostring(#Players:GetPlayers())
+
+        if S.ShowPing then
+            local ok, p = pcall(function()
+                return math.round(game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue())
+            end)
+            local ps = ok and (p.."ms") or "—"
+            vPing.Text    = ps
+            PingLbl.Text  = "📶 "..ps
         else
-            pingVal.Text = "— ms"
+            vPing.Text = "— ms"
         end
-        fishCaughtVal.Text = tostring(sessionFishCount)
     end
 end)
 
 -- ============================================================
--- ▶ FISHING TAB
+-- ▶  FISHING TAB
 -- ============================================================
 
--- ─ Fishing Support ─────────────────────────────────────────
-createSection(TabFishing, "── Fishing Support", 10)
+-- ─ Fishing Support ─────
+mkSection(TabFishing, "  Fishing Support", 10)
 
-createToggle(TabFishing, "Show Real Ping", "Display ping in top bar", false, function(s)
-    State.ShowRealPing = s
-    pingLabel.Visible = s
+mkToggle(TabFishing, "Show Real Ping", "Displays ping in title bar", false, function(s)
+    S.ShowPing = s; PingLbl.Visible = s
 end, 11)
 
-createToggle(TabFishing, "Auto Equip Rod", "Equips your best fishing rod on toggle", false, function(s)
-    State.AutoEquipRod = s
-    if s then autoEquipBestRod() end
+mkToggle(TabFishing, "Auto Equip Rod", "Equips best rod on enable", false, function(s)
+    S.AutoEquipRod = s
+    if s then task.spawn(equipBestRod) end
 end, 12)
 
-createToggle(TabFishing, "Walk on Water", "Prevents you from sinking", false, function(s)
-    State.WalkOnWater = s
-    if s then startWalkOnWater()
-    elseif wowThread then task.cancel(wowThread) wowThread = nil end
+mkToggle(TabFishing, "Walk on Water", "Prevents sinking into water", false, function(s)
+    S.WalkOnWater = s; toggleWoW(s)
 end, 13)
 
-createToggle(TabFishing, "Freeze Player", "Locks your character in place", false, function(s)
-    State.FreezePlayer = s
-    applyFreeze(s)
+mkToggle(TabFishing, "Freeze Player", "Locks character position", false, function(s)
+    S.FreezePlayer = s
+    local h = getHum()
+    if h and not s then h.WalkSpeed = 16; h.JumpPower = 50 end
 end, 14)
 
-createToggle(TabFishing, "No Fishing Animations", "Disables rod/cast animations", false, function(s)
-    State.NoFishingAnimations = s
-    applyNoAnimations(s)
+mkToggle(TabFishing, "No Fishing Animations", "Hides cast/reel animations", false, function(s)
+    S.NoAnims = s
 end, 15)
 
--- ─ Fishing Features (Detector / Auto Fisher) ───────────────
-createSection(TabFishing, "── Auto Fisher (Detector)", 20)
+-- ─ Auto Fisher (Detector) ─────
+mkSection(TabFishing, "  Auto Fisher  (Detector)", 20)
 
--- Status row
-local detectorFrame, detectorStatusLbl = createStatusRow(TabFishing, "Status", "Offline", 21)
-local _, detectorTimeLbl = createStatusRow(TabFishing, "Time Elapsed", "0.0s", 22)
-local _, detectorBagLbl  = createStatusRow(TabFishing, "Fish Caught", "0", 23)
+local _, vDetStatus = mkStatusRow(TabFishing, "Status",       "Offline",  21)
+local _, vDetTime   = mkStatusRow(TabFishing, "Time",         "0.0s",     22)
+local _, vDetBag    = mkStatusRow(TabFishing, "Fish caught",  "0",        23)
 
--- Update labels loop
+-- Update detector labels
 task.spawn(function()
     while task.wait(0.5) do
-        local color = State.DetectorActive and Theme.Success or Theme.Danger
-        detectorStatusLbl.Text = State.DetectorStatus
-        detectorStatusLbl.TextColor3 = color
-        detectorTimeLbl.Text = string.format("%.1fs", State.DetectorTime)
-        detectorBagLbl.Text = tostring(State.DetectorBag)
-        statusVal.Text = State.DetectorActive and "Auto Fishing" or "Idle"
+        vDetStatus.Text      = S.DetectorStatus
+        vDetStatus.TextColor3= S.DetectorActive and T.Good or T.Danger
+        vDetTime.Text        = string.format("%.1fs", S.DetectorTime)
+        vDetBag.Text         = tostring(S.DetectorBag)
     end
 end)
 
-local _, waitBox = createInput(TabFishing, "Wait delay (seconds, default: 1.5)", "1.5", function(v)
-    local num = tonumber(v)
-    if num then State.WaitDelay = num end
+mkInput(TabFishing, "Wait delay in seconds  (default 1.5)", "1.5", function(v)
+    local n = tonumber(v); if n then S.WaitDelay = n end
 end, 24)
 
-createToggle(TabFishing, "Start Detector (Auto Fish)", "Automatically casts and catches fish", false, function(s)
-    State.DetectorActive = s
-    if s then startAutoFisher()
-    else stopAutoFisher() end
+mkToggle(TabFishing, "Start Detector", "Auto cast & catch fish loop", false, function(s)
+    S.DetectorActive = s
+    if s then startFisher() else stopFisher() end
 end, 25)
 
--- ─ Instant Features ─────────────────────────────────────────
-createSection(TabFishing, "── Instant Catch", 30)
+-- ─ Instant Features ─────
+mkSection(TabFishing, "  Instant Features", 30)
 
-local _, completeBox = createInput(TabFishing, "Complete delay (s, 0 = instant)", "0", function(v)
-    local num = tonumber(v)
-    if num then State.CompleteDelay = num end
+mkInput(TabFishing, "Complete delay (0 = instant)", "0", function(v)
+    local n = tonumber(v); if n then S.CompleteDelay = n end
 end, 31)
 
-createToggle(TabFishing, "Instant Fishing", "Complete minigame instantly on bite", false, function(s)
-    State.InstantFishing = s
+mkToggle(TabFishing, "Instant Fishing", "Instantly completes minigame on bite", false, function(s)
+    S.InstantFishing = s
 end, 32)
 
--- ─ Legit Fishing Options ────────────────────────────────────
-createSection(TabFishing, "── Legit Mode Options", 33)
-local _, legitBox = createInput(TabFishing, "Legit Click Delay (0.14 default)", "0.19", function(v)
-    local num = tonumber(v)
-    if num then State.WaitDelay = num end
+-- ─ Legit Fishing ─────
+mkSection(TabFishing, "  Legit Mode", 33)
+
+mkInput(TabFishing, "Legit Click Delay (default 0.19)", "0.19", function(v)
+    local n = tonumber(v); if n then S.LegitDelay = n end
 end, 34)
 
-local _, shakeBox = createInput(TabFishing, "Shake Delay (seconds)", "0.3", function(v)
-    -- stored for future shake emulation
+mkInput(TabFishing, "Shake Delay (seconds)", "0.3", function(v)
+    local n = tonumber(v); if n then S.ShakeDelay = n end
 end, 35)
 
-createToggle(TabFishing, "Auto Shake (Legit)", "Simulates realistic fishing shakes", false, function(s)
-    -- auto shake is part of the main detector loop
+mkToggle(TabFishing, "Legit Fishing", "Mimics human-like click timing", false, function(s)
+    S.LegitMode = s
 end, 36)
 
--- ─ Selling Features ─────────────────────────────────────────
-createSection(TabFishing, "── Selling Features", 40)
+mkToggle(TabFishing, "Auto Shake", "Handles shake events automatically", false, function(s)
+    S.AutoShake = s
+end, 37)
 
-createDropdown(TabFishing, "Sell Mode", {"Delay", "Bag Full", "Instant"}, "Delay", function(opt)
-    State.SellMode = opt
+-- ─ Selling Features ─────
+mkSection(TabFishing, "  Selling Features", 40)
+
+mkDropdown(TabFishing, "Sell Mode", {"Delay","Bag Full","Instant"}, "Delay", function(opt)
+    S.SellMode = opt
 end, 41)
 
-local _, sellValBox = createInput(TabFishing, "Value (delay secs / bag size)", "30", function(v)
-    local num = tonumber(v)
-    if num then State.SellValue = num end
+mkInput(TabFishing, "Value  (delay secs / bag fill %)", "30", function(v)
+    local n = tonumber(v); if n then S.SellValue = n end
 end, 42)
 
-createToggle(TabFishing, "Start Auto Selling", "Automatically sells fish", false, function(s)
-    State.AutoSell = s
+mkToggle(TabFishing, "Start Auto Selling", "Sells fish based on mode above", false, function(s)
+    S.AutoSell = s
     if s then startAutoSell()
-    elseif autoSellThread then task.cancel(autoSellThread) autoSellThread = nil end
+    elseif sellThread then task.cancel(sellThread) sellThread = nil end
 end, 43)
 
-createButton(TabFishing, "💰  Sell All Fish Now", Theme.AccentDark, function()
-    sellAll()
-end, 44)
+mkBtn(TabFishing, "💰  Sell All Fish Now", true, doSellAll, 44)
 
--- ─ Favorite Features ─────────────────────────────────────────
-createSection(TabFishing, "── Favorite Features", 50)
+-- ─ Favorite Features ─────
+mkSection(TabFishing, "  Favorite Features", 50)
 
-createDropdown(TabFishing, "Rarity Filter", {"Any","Common","Uncommon","Rare","Epic","Legendary","Mythic","SECRET"}, "Any", function(opt)
-    State.FavRarity = opt
+mkDropdown(TabFishing, "Name Filter", {"Any"}, "Any", function(opt)
+    S.FavName = opt
 end, 51)
 
-createDropdown(TabFishing, "Variant Filter", {"Any","Normal","Albino","Mutated","Shiny","Chroma"}, "Any", function(opt)
-    State.FavVariant = opt
-end, 52)
+mkDropdown(TabFishing, "Rarity Filter",
+    {"Any","Common","Uncommon","Rare","Epic","Legendary","Mythic","SECRET"},
+    "Any", function(opt) S.FavRarity = opt end, 52)
 
-createDropdown(TabFishing, "Mode", {"Add Favorite","Remove Favorite"}, "Add Favorite", function(opt)
-    State.FavMode = opt == "Add Favorite" and "Add" or "Remove"
-end, 53)
+mkDropdown(TabFishing, "Variant Filter",
+    {"Any","Normal","Albino","Mutated","Shiny","Chroma"},
+    "Any", function(opt) S.FavVariant = opt end, 53)
 
-createToggle(TabFishing, "Auto Favorite", "Auto-favorites fish matching filters", false, function(s)
-    State.AutoFavorite = s
-    if s then startAutoFavorite()
-    elseif autoFavThread then task.cancel(autoFavThread) autoFavThread = nil end
-end, 54)
+mkDropdown(TabFishing, "Mode Favorite",
+    {"Add Favorite","Remove Favorite"},
+    "Add Favorite", function(opt) S.FavMode = opt end, 54)
 
-createButton(TabFishing, "⭐  Favorite All Matching Now", Theme.Button, function()
-    autoFavoriteLoop()
-    notify("Favorited matching fish!")
+mkToggle(TabFishing, "Auto Favorite", "Favorites fish matching your filters", false, function(s)
+    S.AutoFavorite = s
+    if s then startAutoFav()
+    elseif favThread then task.cancel(favThread) favThread = nil end
 end, 55)
 
-createButton(TabFishing, "🗑️  Unfavorite All Fish", Color3.fromRGB(60, 30, 30), function()
-    unfavoriteAllFish()
+mkBtn(TabFishing, "⭐  Favorite All Matching Now", false, function()
+    task.spawn(runFavoriteLoop); notify("Favorited matching fish!")
 end, 56)
 
--- ─ Auto Rejoin Features ──────────────────────────────────────
-createSection(TabFishing, "── Auto Rejoin", 60)
+mkBtn(TabFishing, "🗑️  Unfavorite All Fish", false, function()
+    task.spawn(unfavoriteAll)
+end, 57)
 
-createDropdown(TabFishing, "Execute Mode", {"Timer","On Disconnect","On Kick"}, "Timer", function(opt)
-    State.RejoinMode = opt
-end, 61)
+-- ─ Auto Rejoin ─────
+mkSection(TabFishing, "  Auto Rejoin Features", 60)
 
-local _, rejoinBox = createInput(TabFishing, "Rejoin Timer (hours, default 1)", "1", function(v)
-    local num = tonumber(v)
-    if num then State.RejoinTimer = math.max(0.1, num) end
+mkDropdown(TabFishing, "Auto Execute Mode",
+    {"Timer","On Disconnect","On Kick"},
+    "Timer", function(opt) S.RejoinMode = opt end, 61)
+
+mkInput(TabFishing, "Rejoin Timer (hours)", "1", function(v)
+    local n = tonumber(v); if n then S.RejoinTimer = math.max(0.1, n) end
 end, 62)
 
-createToggle(TabFishing, "Enable Auto Rejoin", "Rejoins server after set time", false, function(s)
-    State.AutoRejoin = s
-    if s then startAutoRejoin()
+mkToggle(TabFishing, "Auto Rejoin", "Rejoins game after set timer", false, function(s)
+    S.AutoRejoin = s
+    if s then startRejoin()
     elseif rejoinThread then task.cancel(rejoinThread) rejoinThread = nil end
 end, 63)
 
 -- ============================================================
--- ▶ AUTO TAB (Automatically)
+-- ▶  AUTO TAB
 -- ============================================================
-createSection(TabAuto, "── Auto Shop", 10)
-createToggle(TabAuto, "Auto Buy Bait", "Auto-purchase bait from shop", false, function(s) end, 11)
-createButton(TabAuto, "🛒  Open Shop", Theme.Button, function()
-    local shopPrompts = workspace:FindFirstChild("Locations")
-    notify("Navigate to a shop NPC to interact!")
-end, 12)
+mkSection(TabAuto, "  Shop Features", 10)
+mkToggle(TabAuto, "Auto Buy Bait", "Purchases bait from nearby shop", false, function(s)
+    notify(s and "Auto Buy Bait ON" or "Auto Buy Bait OFF")
+end, 11)
 
-createSection(TabAuto, "── Save Position", 20)
-local savedPos = nil
-createButton(TabAuto, "📌  Save Position", Theme.Button, function()
-    local hrp = getHRP()
-    if hrp then savedPos = hrp.CFrame notify("Position saved!") end
+mkSection(TabAuto, "  Save Position Features", 20)
+mkBtn(TabAuto, "📌  Save Current Position", false, function()
+    local h = getHRP()
+    if h then savedCF = h.CFrame; notify("Position saved!") end
 end, 21)
-createButton(TabAuto, "🔁  Return to Position", Theme.AccentDark, function()
-    if savedPos then
-        local hrp = getHRP()
-        if hrp then hrp.CFrame = savedPos notify("Teleported to saved position!") end
+mkBtn(TabAuto, "🔁  Return to Saved Position", true, function()
+    if savedCF then
+        local h = getHRP(); if h then h.CFrame = savedCF; notify("Teleported!") end
     else notify("No position saved!") end
 end, 22)
 
-createSection(TabAuto, "── Auto Enchant", 30)
-createToggle(TabAuto, "Auto Enchant Fish", "Automatically enchants fish using stones", false, function(s)
-    notify(s and "Auto Enchant enabled!" or "Auto Enchant disabled!")
-end, 31)
+mkSection(TabAuto, "  Enchant Features", 30)
+mkToggle(TabAuto, "Auto Enchant Fish", "Uses enchant stones on fish", false, function(s) end, 31)
 
-createSection(TabAuto, "── Auto Totem", 32)
-createToggle(TabAuto, "Auto Use Totem", "Automatically uses totem when available", false, function(s) end, 33)
+mkSection(TabAuto, "  Totem Features", 32)
+mkToggle(TabAuto, "Auto Use Totem", "Activates totems automatically", false, function(s) end, 33)
 
-createSection(TabAuto, "── Auto Potions", 34)
-createToggle(TabAuto, "Auto Drink Luck Potion", "Drinks luck potions automatically", false, function(s) end, 35)
+mkSection(TabAuto, "  Potions Features", 34)
+mkToggle(TabAuto, "Auto Drink Luck Potion", "Uses luck potions when available", false, function(s) end, 35)
 
-createSection(TabAuto, "── Event Features", 40)
-createToggle(TabAuto, "Auto Event Participation", "Auto-joins events when active", false, function(s) end, 41)
-createButton(TabAuto, "🎉  Check Active Events", Theme.Button, function()
-    local flags = {
-        NewYears = 1767204600, PirateCoveEnd = 1769994000, ValentineEnd = 1772323200
-    }
+mkSection(TabAuto, "  Event Features", 40)
+mkToggle(TabAuto, "Auto Event Join", "Joins events as they activate", false, function(s) end, 41)
+mkBtn(TabAuto, "🎉  Check Active Events", false, function()
     local now = os.time()
+    local events = {
+        {n="Pirate Cove",    t=1769994000},
+        {n="Valentine",      t=1772323200},
+        {n="Weekly Limited", t=1770508800},
+        {n="Volcano Weekly", t=1771113600},
+    }
     local active = {}
-    for name, endTime in pairs(flags) do
-        if now < endTime then table.insert(active, name) end
+    for _, e in ipairs(events) do
+        if now < e.t then table.insert(active, e.n) end
     end
-    notify(#active > 0 and "Active: " .. table.concat(active, ", ") or "No events active")
+    notify(#active > 0 and "Active: "..table.concat(active,", ") or "No events active right now")
 end, 42)
 
 -- ============================================================
--- ▶ TRADING TAB
+-- ▶  TRADING TAB
 -- ============================================================
-createSection(TabTrading, "── Trading Options", 10)
-createLabel(TabTrading, "Trade features interact with in-game trading NPCs.", Theme.SubText, 11)
+mkSection(TabTrading, "  Trading Fish Features", 10)
+mkToggle(TabTrading, "Auto Accept Fish Trades", "Accepts incoming fish trades", false, function(s) end, 11)
 
-createSection(TabTrading, "── Auto Accept", 20)
-createToggle(TabTrading, "Auto Accept Trades", "Auto-accepts incoming trade requests", false, function(s)
-    notify(s and "⚠️ Auto Accept ON - Be careful!" or "Auto Accept OFF")
-end, 21)
+mkSection(TabTrading, "  Trading Enchant Stones Features", 20)
+mkToggle(TabTrading, "Auto Accept Enchant Trades", "", false, function(s) end, 21)
 
-createToggle(TabTrading, "Auto Accept Fish Trades", "Only accepts fish item trades", false, function(s) end, 22)
-createToggle(TabTrading, "Auto Accept Enchant Trades", "Only accepts enchant stone trades", false, function(s) end, 23)
-createToggle(TabTrading, "Auto Accept Coin Trades", "Only accepts coin-based trades", false, function(s) end, 24)
+mkSection(TabTrading, "  Trading Coin Features", 30)
+mkToggle(TabTrading, "Auto Accept Coin Trades", "", false, function(s) end, 31)
 
-createSection(TabTrading, "── Trade Filters", 30)
-createDropdown(TabTrading, "Min Rarity to Accept", {"Any","Rare","Epic","Legendary","Mythic","SECRET"}, "Any", function(opt)
-    State.TradeMinRarity = opt
-end, 31)
+mkSection(TabTrading, "  Trading Fish By Rarity", 40)
+mkDropdown(TabTrading, "Min Rarity to Accept",
+    {"Any","Rare","Epic","Legendary","Mythic","SECRET"},
+    "Any", function(opt) S.TradeMinRarity = opt end, 41)
+
+mkSection(TabTrading, "  Auto Accept Features", 50)
+mkToggle(TabTrading, "Auto Accept All Trades", "⚠️ Accepts ANY incoming trade!", false, function(s)
+    if s then notify("⚠️ Auto Accept ALL trades is ON – be careful!") end
+end, 51)
 
 -- ============================================================
--- ▶ MENU TAB
+-- ▶  MENU TAB
 -- ============================================================
-createSection(TabMenu, "── Coin Features", 10)
-createButton(TabMenu, "🪙  Coin Counter", Theme.Button, function()
-    local data = getReplionData()
-    if data then
-        local ok, coins = pcall(function() return data:GetExpect("Coins") end)
-        if ok and coins then notify("💰 Coins: " .. tostring(coins))
-        else notify("Could not read coins") end
+mkSection(TabMenu, "  Coin Features", 10)
+mkBtn(TabMenu, "🪙  Check My Coins", false, function()
+    local d = getRepData()
+    if d then
+        local ok, c = pcall(function() return d:GetExpect("Coins") end)
+        notify(ok and "💰 Coins: "..tostring(c) or "Could not read coins!")
     end
 end, 11)
 
-createSection(TabMenu, "── Enchant Stone Features", 20)
-createButton(TabMenu, "💎  Count Enchant Stones", Theme.Button, function()
-    local items = getInventoryItems()
-    local count = 0
-    for _, item in ipairs(items) do
-        local d = getItemData(item.Id)
-        if d and d.Data and d.Data.Type == "Enchant Stones" then count = count + 1 end
+mkSection(TabMenu, "  Enchant Stone Features", 20)
+mkBtn(TabMenu, "💎  Count Enchant Stones", false, function()
+    local n = 0
+    for _, item in ipairs(getInvItems()) do
+        if tostring(item.Id):lower():find("enchant") then n = n + 1 end
     end
-    notify("Enchant Stones in inventory: " .. count)
+    notify("Enchant Stones: " .. n)
 end, 21)
 
-createSection(TabMenu, "── Events", 30)
-createButton(TabMenu, "🦕  Lochness Monster Event", Theme.Button, function()
-    notify("Navigate to Fisherman Island and watch for the Lochness event!")
-end, 31)
-
-createButton(TabMenu, "🏴‍☠️  Event Pirates", Theme.Button, function()
-    notify("Pirate Cove ends: " .. os.date("%Y-%m-%d", 1769994000))
+mkSection(TabMenu, "  Lochness Monster Event", 30)
+mkLabel(TabMenu, "Watch Fisherman Island for the Lochness event.", T.Sub, 31)
+mkBtn(TabMenu, "🦕  Teleport to Lochness Area", false, function()
+    tpTo(Vector3.new(-30, 5, 50))
 end, 32)
 
-createSection(TabMenu, "── Crystal / Leviathan", 40)
-createToggle(TabMenu, "Auto Crystal Collector", "Auto-collects crystals in the area", false, function(s) end, 41)
-createButton(TabMenu, "🐉  Guide: Leviathan Boss", Theme.Button, function()
-    notify("Leviathan: Catch it using special bait in the Deep Zone!")
-end, 42)
+mkSection(TabMenu, "  Event Pirates Features", 33)
+mkLabel(TabMenu, "Pirate Cove available until 2025-08.", T.Sub, 34)
+mkBtn(TabMenu, "🏴‍☠️  Teleport to Pirate Cove", false, function()
+    tpTo(Vector3.new(500, 5, -800))
+end, 35)
+
+mkSection(TabMenu, "  Auto Crystal Features", 40)
+mkToggle(TabMenu, "Auto Crystal Collector", "Collects crystals nearby", false, function(s) end, 41)
+
+mkSection(TabMenu, "  Guide Leviathan Features", 42)
+mkLabel(TabMenu, "Use special bait at the Deep Ocean zone.", T.Sub, 43)
+mkBtn(TabMenu, "🐉  Leviathan Teleport", false, function()
+    tpTo(Vector3.new(-62, 4, 2767)); notify("Teleporting to Deep Zone!")
+end, 44)
+
+mkSection(TabMenu, "  Relic Features", 50)
+mkToggle(TabMenu, "Auto Collect Relics", "Picks up relic items automatically", false, function(s) end, 51)
+
+mkSection(TabMenu, "  Semi Kaitun [BETA]", 52)
+mkToggle(TabMenu, "Semi Kaitun Mode", "Experimental semi-auto mode [BETA]", false, function(s)
+    notify(s and "Semi Kaitun BETA ON" or "Semi Kaitun OFF")
+end, 53)
+
+mkSection(TabMenu, "  Auto Equip Charms", 54)
+mkToggle(TabMenu, "Auto Equip Best Charms", "Equips highest-stat charms", false, function(s) end, 55)
 
 -- ============================================================
--- ▶ QUEST TAB
+-- ▶  QUEST TAB
 -- ============================================================
-createSection(TabQuest, "── Quest Navigation", 10)
-createLabel(TabQuest, "Teleports to quest-related locations.", Theme.SubText, 11)
-
-createButton(TabQuest, "🗿  Sisyphus Statue Location", Theme.Button, function()
-    teleportTo(Vector3.new(-150, 10, 350))
-    notify("Teleporting to Sisyphus Statue area!")
-end, 12)
-
-createButton(TabQuest, "⚗️  Element Quest Location", Theme.Button, function()
-    teleportTo(Vector3.new(200, 15, -300))
-    notify("Teleporting to Element Quest area!")
-end, 13)
-
-createButton(TabQuest, "💎  Diamond Researcher Quest", Theme.Button, function()
-    teleportTo(Vector3.new(350, 8, 100))
-    notify("Teleporting to Diamond Researcher area!")
-end, 14)
-
-createButton(TabQuest, "🔩  Artifact Lever Location", Theme.Button, function()
-    teleportTo(Vector3.new(80, 20, -500))
-    notify("Teleporting to Artifact Lever!")
-end, 15)
-
-createButton(TabQuest, "💎  Crystalline Passage", Theme.Button, function()
-    teleportTo(Vector3.new(-200, -15, 700))
-    notify("Teleporting to Crystalline Passage!")
-end, 16)
-
--- ============================================================
--- ▶ TELEPORT TAB
--- ============================================================
-createSection(TabTeleport, "── Teleport to Location", 10)
-
-for locName, locPos in pairs(LOCATIONS) do
-    createButton(TabTeleport, "📍  " .. locName, Theme.Button, function()
-        teleportTo(locPos)
-        notify("Teleporting to " .. locName)
-    end)
-end
-
-createSection(TabTeleport, "── Teleport to Player", 40)
-local _, playerBox = createInput(TabTeleport, "Enter player name...", "", nil, 41)
-createButton(TabTeleport, "🏃  Teleport to Player", Theme.AccentDark, function()
-    teleportToPlayer(playerBox.Text)
-end, 42)
-
--- ============================================================
--- ▶ MISC TAB
--- ============================================================
-createSection(TabMisc, "── Player Utility", 10)
-
-createToggle(TabMisc, "Speed Hack", "Increases walk speed", false, function(s)
-    State.WalkSpeed = s
-    if not s then
-        local hum = getHumanoid()
-        if hum then hum.WalkSpeed = 16 end
-    else applyWalkSpeed() end
+mkSection(TabQuest, "  Artifact Lever Location", 10)
+mkBtn(TabQuest, "📍  Go to Artifact Lever", false, function()
+    tpTo(Vector3.new(80, 20, -500)); notify("Teleporting to Artifact Lever!")
 end, 11)
 
-local _, speedBox = createInput(TabMisc, "Walk Speed value (default 16)", "50", function(v)
-    local num = tonumber(v)
-    if num then
-        State.WalkSpeedValue = num
-        if State.WalkSpeed then applyWalkSpeed() end
-    end
-end, 12)
-
-createToggle(TabMisc, "Noclip", "Walk through walls", false, function(s)
-    State.Noclip = s
-    if s then startNoclip()
-    elseif noclipThread then
-        noclipThread:Disconnect()
-        noclipThread = nil
-        -- Re-enable collisions
-        local char = getCharacter()
-        if char then
-            for _, v in ipairs(char:GetDescendants()) do
-                if v:IsA("BasePart") then v.CanCollide = true end
-            end
-        end
-    end
-end, 13)
-
-createToggle(TabMisc, "Infinite Jump", "Jump infinitely in the air", false, function(s)
-    State.InfJump = s
-    enableInfJump(s)
-end, 14)
-
-createSection(TabMisc, "── FPS & Performance", 20)
-
-createToggle(TabMisc, "FPS Booster", "Reduces graphics for better performance", false, function(s)
-    State.FPSBooster = s
-    applyFPSBoost(s)
+mkSection(TabQuest, "  Sisyphus Statue Quest", 20)
+mkBtn(TabQuest, "🗿  Go to Sisyphus Statue", false, function()
+    tpTo(Vector3.new(-150, 10, 350)); notify("Teleporting to Sisyphus Statue!")
 end, 21)
 
-createButton(TabMisc, "🔄  Respawn Character", Theme.Button, function()
-    local hum = getHumanoid()
-    if hum then hum.Health = 0 notify("Respawning...") end
+mkSection(TabQuest, "  Element Quest", 30)
+mkBtn(TabQuest, "⚗️  Go to Element Quest NPC", false, function()
+    tpTo(Vector3.new(200, 15, -300)); notify("Teleporting to Element Quest!")
+end, 31)
+
+mkSection(TabQuest, "  Diamond Researcher Quest", 40)
+mkBtn(TabQuest, "💎  Go to Diamond Researcher", false, function()
+    tpTo(Vector3.new(350, 8, 100)); notify("Teleporting to Diamond Researcher!")
+end, 41)
+
+mkSection(TabQuest, "  Crystalline Passage Features", 50)
+mkBtn(TabQuest, "💠  Go to Crystalline Passage", false, function()
+    tpTo(Vector3.new(-200, -10, 700)); notify("Teleporting to Crystalline Passage!")
+end, 51)
+
+-- ============================================================
+-- ▶  TELEPORT TAB
+-- ============================================================
+mkSection(TabTeleport, "  Teleport to Location", 10)
+
+local order = 11
+for name, pos in pairs(LOCS) do
+    local p = pos
+    local n = name
+    mkBtn(TabTeleport, "📍  "..n, false, function() tpTo(p); notify("→ "..n) end, order)
+    order = order + 1
+end
+
+mkSection(TabTeleport, "  Teleport to Player", 40)
+local _, playerBox = mkInput(TabTeleport, "Enter player username…", "", nil, 41)
+mkBtn(TabTeleport, "🏃  Teleport to Player", true, function()
+    tpToPlayer(playerBox.Text)
+end, 42)
+
+-- ============================================================
+-- ▶  MISC TAB
+-- ============================================================
+mkSection(TabMisc, "  Booster FPS", 10)
+mkToggle(TabMisc, "FPS Booster", "Lowers graphics for more FPS", false, function(s)
+    S.FPSBoost = s; applyFPSBoost(s)
+end, 11)
+
+mkSection(TabMisc, "  Utility Player", 20)
+mkToggle(TabMisc, "Speed Hack", "Increase character walk speed", false, function(s)
+    S.WalkSpeed = s
+    if not s then local h = getHum(); if h then h.WalkSpeed = 16 end end
+end, 21)
+
+mkInput(TabMisc, "Walk speed value  (16 = default)", "50", function(v)
+    local n = tonumber(v)
+    if n then S.WalkSpeedVal = n end
 end, 22)
 
-createSection(TabMisc, "── Server Features", 30)
-createButton(TabMisc, "📊  Server Info", Theme.Button, function()
-    local playerCount = #Players:GetPlayers()
-    local ping = math.round(pcall(function()
-        return game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue()
-    end) and game:GetService("Stats").Network.ServerStatsItem["Data Ping"]:GetValue() or 0)
-    notify("Players: " .. playerCount .. " | Job: " .. game.JobId:sub(1, 8) .. "...")
+mkToggle(TabMisc, "Noclip", "Walk through all parts", false, function(s)
+    S.Noclip = s; toggleNoclip(s)
+end, 23)
+
+mkToggle(TabMisc, "Infinite Jump", "Jump unlimited times in air", false, function(s)
+    S.InfJump = s; toggleInfJump(s)
+end, 24)
+
+mkSection(TabMisc, "  Server Features", 30)
+mkBtn(TabMisc, "📊  Server Info", false, function()
+    local cnt = #Players:GetPlayers()
+    notify("Players: "..cnt.." | Job: "..game.JobId:sub(1,10).."…")
 end, 31)
 
-createButton(TabMisc, "🔁  Rejoin Server", Color3.fromRGB(50, 30, 80), function()
-    local tp = game:GetService("TeleportService")
-    pcall(function() tp:Teleport(game.PlaceId, LocalPlayer) end)
-end, 32)
+mkSection(TabMisc, "  Miscellaneous", 40)
+mkBtn(TabMisc, "🔄  Respawn Character", false, function()
+    local h = getHum(); if h then h.Health = 0 end
+end, 41)
+
+mkBtn(TabMisc, "🔁  Rejoin Server", false, function()
+    pcall(function() game:GetService("TeleportService"):Teleport(game.PlaceId, LocalPlayer) end)
+end, 42)
 
 -- ============================================================
--- PERSISTENT LOOPS
+-- OPEN DEFAULT TAB  (direct call — no :Fire() hack)
 -- ============================================================
+selectTab(1)   -- Opens Info tab immediately
 
--- Apply WalkSpeed continuously
-RunService.Heartbeat:Connect(function()
-    if State.WalkSpeed and not State.FreezePlayer then
-        local hum = getHumanoid()
-        if hum then hum.WalkSpeed = State.WalkSpeedValue end
+-- Track FishCaught remote
+task.defer(function()
+    local ev = getNet("FishCaught", false)
+    if ev then
+        ev.OnClientEvent:Connect(function()
+            S.SessionFish = S.SessionFish + 1
+        end)
     end
 end)
 
--- Track fish caught
-local fishCaughtRE = getNet("FishCaught", false)
-if fishCaughtRE then
-    fishCaughtRE.OnClientEvent:Connect(function()
-        sessionFishCount = sessionFishCount + 1
-    end)
-end
-
--- ── Open First Tab ───────────────────────────────────────
-if TabButtons[1] then
-    TabButtons[1].Btn.MouseButton1Click:Fire()
-end
-
--- ── Done ─────────────────────────────────────────────────
-task.delay(1, function()
-    notify("🎣 FishIt Omega Hub loaded! Welcome, " .. LocalPlayer.Name)
+-- Done
+task.delay(0.5, function()
+    notify("🎣 FishIt Omega Hub loaded! Welcome, "..LocalPlayer.Name.."!")
 end)
 
-print("[FishIt Omega Hub] Script loaded successfully!")
+print("[FishIt Omega Hub] ✓ Loaded successfully")
