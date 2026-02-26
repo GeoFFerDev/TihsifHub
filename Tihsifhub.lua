@@ -129,41 +129,161 @@ end
 -- FEATURES
 -- ============================================================
 
--- Auto Fisher
+-- ── Auto Fisher ──────────────────────────────────────────
+-- PRIMARY: UpdateAutoFishingState:InvokeServer(true/false)
+--   AutoFishingLevel = 0 in Constants_1334.lua → unlocked for ALL players.
+--   The game's built-in AutoFishingController handles cast + click loop.
+--
+-- FALLBACK: event-driven manual loop using:
+--   FishingMinigameChanged.OnClientEvent → "Activated" = fish bit
+--   BaitSpawned.OnClientEvent           → bait is in water
+--   FishingStopped.OnClientEvent        → fishing stopped
+--   ChargeFishingRod (RemoteFunction)   → cast
+--   CatchFishCompleted (RemoteFunction) → click during minigame
+
 local fishThread
+local _fishConn_minigame, _fishConn_bait, _fishConn_stopped
+local _fishState = { minigameActive=false, baitInWater=false }
+
+local function _disconnectFishConns()
+    if _fishConn_minigame then pcall(function() _fishConn_minigame:Disconnect() end) _fishConn_minigame=nil end
+    if _fishConn_bait      then pcall(function() _fishConn_bait:Disconnect()      end) _fishConn_bait=nil      end
+    if _fishConn_stopped   then pcall(function() _fishConn_stopped:Disconnect()   end) _fishConn_stopped=nil   end
+    _fishState.minigameActive=false
+    _fishState.baitInWater=false
+end
+
+local function _setupFishListeners()
+    _disconnectFishConns()
+    -- FishingMinigameChanged fires with "Activated" when a fish bites
+    local evMini = getNet("FishingMinigameChanged", false)
+    if evMini then
+        _fishConn_minigame = evMini.OnClientEvent:Connect(function(state)
+            _fishState.minigameActive = (state == "Activated" or state == "Clicked")
+        end)
+    end
+    -- BaitSpawned fires when bait is cast into water
+    local evBait = getNet("BaitSpawned", false)
+    if evBait then
+        _fishConn_bait = evBait.OnClientEvent:Connect(function()
+            _fishState.baitInWater = true
+        end)
+    end
+    -- FishingStopped fires when fishing ends (catch, cancel, etc.)
+    local evStop = getNet("FishingStopped", false)
+    if evStop then
+        _fishConn_stopped = evStop.OnClientEvent:Connect(function()
+            _fishState.baitInWater = false
+            _fishState.minigameActive = false
+        end)
+    end
+end
+
 local function startFisher()
-    if fishThread then task.cancel(fishThread) end
+    if fishThread then pcall(task.cancel, fishThread) fishThread=nil end
+    _setupFishListeners()
+    S.DetectorStatus = "Starting..."
+    S.DetectorTime = 0
+
     fishThread = task.spawn(function()
-        S.DetectorStatus="Running"
-        S.DetectorTime=0
-        local cam=workspace.CurrentCamera
-        while S.DetectorActive do
-            local rf=getNet("ChargeFishingRod",true)
-            if rf then
-                local vp=cam.ViewportSize
-                pcall(function() rf:InvokeServer(nil,nil,Vector2.new(vp.X/2,vp.Y/2),nil) end)
+        -- ── Step 1: Try game built-in auto-fishing ──────────────
+        -- AutoFishingLevel=0 means always available.
+        -- UpdateAutoFishingState:InvokeServer(true) enables it.
+        local autoRF = getNet("UpdateAutoFishingState", true)
+        local usingBuiltin = false
+        if autoRF then
+            local ok, result = pcall(function() return autoRF:InvokeServer(true) end)
+            if ok then
+                usingBuiltin = true
+                S.DetectorStatus = "Auto (built-in)"
+                notify("Auto-fishing enabled (game built-in)!")
             end
-            task.wait(0.5)
-            local t0=tick()
-            local caught=false
-            local crf=getNet("CatchFishCompleted",true)
-            while S.DetectorActive and (tick()-t0)<(S.WaitDelay+12) do
-                task.wait(0.19)
-                S.DetectorTime=tick()-t0
-                if crf then
-                    local ok,res=pcall(function() return crf:InvokeServer() end)
-                    if ok and res then caught=true break end
-                end
-            end
-            if caught then S.DetectorBag=S.DetectorBag+1 S.SessionFish=S.SessionFish+1 end
-            task.wait(math.max(S.WaitDelay,0.1))
         end
-        S.DetectorStatus="Offline"
+
+        if usingBuiltin then
+            -- Built-in handles everything; we just monitor fish count via FishCaught event
+            local evCaught = getNet("FishCaught", false)
+            if evCaught then
+                evCaught.OnClientEvent:Connect(function(fishData)
+                    if S.DetectorActive then
+                        S.DetectorBag = S.DetectorBag + 1
+                        S.SessionFish = S.SessionFish + 1
+                    end
+                end)
+            end
+            -- Keep alive while active
+            while S.DetectorActive do task.wait(1) end
+            -- Disable built-in when stopped
+            pcall(function() autoRF:InvokeServer(false) end)
+        else
+            -- ── Step 2: Fallback — event-driven manual loop ───────
+            S.DetectorStatus = "Auto (manual)"
+            local cam = workspace.CurrentCamera
+            local chargeRF = getNet("ChargeFishingRod", true)
+            local catchRF  = getNet("CatchFishCompleted", true)
+
+            while S.DetectorActive do
+                local t0 = tick()
+                S.DetectorTime = 0
+
+                -- Cast: charge + release
+                if chargeRF then
+                    local vp = cam.ViewportSize
+                    local castVec = Vector2.new(vp.X/2, vp.Y/2)
+                    -- InvokeServer(nil, nil, Vector2, nil) matches game source line 917
+                    pcall(function() chargeRF:InvokeServer(nil, nil, castVec, nil) end)
+                end
+
+                -- Wait for bait to land (or timeout)
+                local baitTimeout = tick() + 4
+                repeat task.wait(0.1) until _fishState.baitInWater or tick() > baitTimeout
+
+                if not S.DetectorActive then break end
+
+                -- Wait for fish to bite (or timeout = WaitDelay + 15s max)
+                local biteTimeout = tick() + S.WaitDelay + 15
+                repeat
+                    task.wait(0.1)
+                    S.DetectorTime = tick() - t0
+                until _fishState.minigameActive or tick() > biteTimeout or not _fishState.baitInWater
+
+                if not S.DetectorActive then break end
+
+                -- Reel: spam CatchFishCompleted with ClickDelay=0.14s (from Constants_1334.lua)
+                if _fishState.minigameActive and catchRF then
+                    local reeledIn = false
+                    local reelTimeout = tick() + 30
+                    while _fishState.minigameActive and tick() < reelTimeout and S.DetectorActive do
+                        local ok, res = pcall(function() return catchRF:InvokeServer() end)
+                        if ok and res then
+                            S.DetectorBag  = S.DetectorBag  + 1
+                            S.SessionFish  = S.SessionFish  + 1
+                            reeledIn = true
+                            _fishState.minigameActive = false
+                            break
+                        end
+                        task.wait(0.14) -- ClickDelay from Constants_1334.lua
+                    end
+                end
+
+                -- Short cooldown before next cast
+                task.wait(math.max(S.WaitDelay, 0.5))
+            end
+        end
+
+        S.DetectorStatus = "Offline"
+        _disconnectFishConns()
     end)
 end
+
 local function stopFisher()
-    if fishThread then task.cancel(fishThread) fishThread=nil end
-    S.DetectorStatus="Offline"
+    S.DetectorActive = false
+    if fishThread then pcall(task.cancel, fishThread) fishThread=nil end
+    -- Disable game built-in auto-fishing too
+    local autoRF = getNet("UpdateAutoFishingState", true)
+    if autoRF then pcall(function() autoRF:InvokeServer(false) end) end
+    S.DetectorStatus = "Offline"
+    _disconnectFishConns()
 end
 
 -- Sell
@@ -273,22 +393,19 @@ local LOCS={
     ["Ancient Ruins"]=Vector3.new(-400,12,500),
     ["Sell NPC"]=Vector3.new(10,5,30),
 }
--- safeOffset: how many studs above v3 to land. Default 5 for land.
--- For event boat coordinates (Y≈-1.35) use safeOffset=4.5 to land on deck.
-local function tpTo(v3, safeOffset)
-    local h = hrp()
-    if not h then return end
+-- tpTo: holds the CFrame for 8 Heartbeat frames so physics/game cant snap back
+-- safeOffset: studs above v3. Default 5 (land). Use 4 for ocean boat coords.
+local RunService = game:GetService("RunService")
+local function tpTo(targetV3, safeOffset)
     local offset = safeOffset or 5
-    local target = CFrame.new(v3 + Vector3.new(0, offset, 0))
-    -- Set CFrame multiple times over 3 frames so physics doesn't snap it back
-    h.CFrame = target
-    task.defer(function()
-        local h2 = hrp()
-        if h2 then h2.CFrame = target end
-    end)
-    task.delay(0.1, function()
-        local h3 = hrp()
-        if h3 then h3.CFrame = target end
+    local dest = CFrame.new(targetV3.X, targetV3.Y + offset, targetV3.Z)
+    local frames = 0
+    local conn
+    conn = RunService.Heartbeat:Connect(function()
+        frames = frames + 1
+        local h = hrp()
+        if h then h.CFrame = dest end
+        if frames >= 8 then conn:Disconnect() end
     end)
 end
 local function tpToPlayer(name)
@@ -1294,25 +1411,29 @@ local function handleEventStart(evName)
             end)
         end
 
-        -- Auto-TP: wait 1.5s for the game's own event animation/state to settle
-        -- before overriding the character CFrame, otherwise the game snaps them back
+        -- Auto-TP: wait 2s for game event animation to settle, then:
+        --   1. Enable Walk on Water (Ghost Shark is OCEAN — need WoW to stand + fish)
+        --   2. Teleport to nearest coord (Y=-1.35 base + 4 offset = Y=2.65, above water)
         if EventState.GhostSharkAutoTP then
             task.spawn(function()
-                task.wait(1.5)
-                local h = hrp()
-                if h then
-                    -- Boat coords are at Y=-1.35, deck height needs +4.5 offset
-                    tpTo(nearestCoord(GHOST_SHARK_COORDS), 4.5)
-                    notify("✈ Teleported to Ghost Shark zone!")
-                end
+                task.wait(2)
+                -- Enable WalkOnWater so player stands above ocean surface
+                S.WalkOnWater = true
+                toggleWoW(true)
+                task.wait(0.3)
+                tpTo(nearestCoord(GHOST_SHARK_COORDS), 4)
+                notify("✈ TP to Ghost Shark zone! WalkOnWater enabled.")
             end)
         end
 
-        -- Auto-Fish: spawn separate thread
+        -- Auto-Fish: start after TP settles (2.5s total from event)
+        -- FreezePlayer prevents the >8-stud movement check from stopping auto-fishing
         if EventState.GhostSharkAutoFish then
             task.spawn(function()
-                task.wait(0.8)  -- wait after optional TP
+                task.wait(2.5)
                 if not S.DetectorActive then
+                    -- Freeze player so auto-fishing movement check doesnt fire
+                    S.FreezePlayer = true
                     S.DetectorActive = true
                     startFisher()
                     notify("🎣 Auto-Fishing started for Ghost Shark Hunt!")
@@ -1328,12 +1449,13 @@ local function handleEventStart(evName)
         end
         if EventState.MegaAutoTP then
             task.spawn(function()
-                task.wait(1.5)
-                if hrp() then
-                    -- Megalodon Hunt coords at Y=-1.4 (boat/raft), use 4.5 offset
-                    tpTo(nearestCoord(data.coords), 4.5)
-                    notify("✈ Teleported to Megalodon zone!")
-                end
+                task.wait(2)
+                -- Megalodon is OCEAN — enable WoW so player can stand and fish
+                S.WalkOnWater = true
+                toggleWoW(true)
+                task.wait(0.3)
+                tpTo(nearestCoord(data.coords), 4)
+                notify("✈ TP to Megalodon zone! WalkOnWater enabled.")
             end)
         end
 
@@ -1345,12 +1467,13 @@ local function handleEventStart(evName)
         end
         if EventState.LeviaAutoTP then
             task.spawn(function()
-                task.wait(1.5)
-                if hrp() then
-                    -- Leviathan zone is underwater/dock, safe offset 4.5
-                    tpTo(nearestCoord(data.coords), 4.5)
-                    notify("✈ Teleported to Leviathan zone!")
-                end
+                task.wait(2)
+                -- Leviathan is deep ocean — enable WoW
+                S.WalkOnWater = true
+                toggleWoW(true)
+                task.wait(0.3)
+                tpTo(nearestCoord(data.coords), 4)
+                notify("✈ TP to Leviathan zone! WalkOnWater enabled.")
             end)
         end
 
@@ -1362,10 +1485,11 @@ local function handleEventStart(evName)
         end
         if EventState.SharkHuntAutoTP then
             task.spawn(function()
-                task.wait(1.5)
-                if hrp() then
-                    tpTo(nearestCoord(data.coords), 4.5)
-                end
+                task.wait(2)
+                S.WalkOnWater = true
+                toggleWoW(true)
+                task.wait(0.3)
+                tpTo(nearestCoord(data.coords), 4)
             end)
         end
 
@@ -1399,7 +1523,8 @@ local function handleEventEnd(evName)
         if EventState.GhostSharkAutoFish and S.DetectorActive then
             S.DetectorActive = false
             stopFisher()
-            notify("Auto-fishing stopped (Hunt ended).")
+            S.FreezePlayer = false  -- unfreeze player when hunt ends
+            notify("Auto-fishing stopped (Ghost Shark Hunt ended).")
         end
     end
 end
@@ -1522,12 +1647,12 @@ mkToggle(TabEvents, "Auto Fish During Hunt", "Auto-starts Detector for Ghost Sha
 end, 17)
 
 mkBtn(TabEvents, "🦈  TP to Nearest Ghost Shark Spot", true, function()
-    tpTo(nearestCoord(GHOST_SHARK_COORDS), 4.5)
+    tpTo(nearestCoord(GHOST_SHARK_COORDS), 4)
     notify("Teleported to Ghost Shark Hunt zone!")
 end, 18)
 
 mkBtn(TabEvents, "📋  Ghost Shark Hunt Info", false, function()
-    notify("Ghost Shark Hunt | Queue: 4min | Active: 20min | SECRET, prob 2e-6")
+    notify("Ghost Shark: SECRET | 1 in 500,000 odds | 4min warning | 20min hunt | Ocean only | Need Element/Angler rod")
 end, 19)
 
 -- ─ Megalodon Hunt ─────────────────────────────────────────
