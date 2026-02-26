@@ -91,6 +91,29 @@ local function getItems()
     return ok and v or {}
 end
 
+-- Rods live at Inventory > "Fishing Rods" — confirmed from PlayerStatsUtility_1323.lua
+-- GetBestFishingRod reads: d:GetExpect({"Inventory","Fishing Rods"})
+local function getRods()
+    local d = getRepData()
+    if not d then return {} end
+    local ok, v = pcall(function() return d:GetExpect({"Inventory","Fishing Rods"}) end)
+    return ok and v or {}
+end
+
+-- Returns the UUID of the currently equipped rod, or nil
+local function getEquippedRodUUID()
+    local d = getRepData()
+    if not d then return nil end
+    local ok, equipped = pcall(function() return d:GetExpect("EquippedItems") end)
+    if not ok or not equipped then return nil end
+    -- EquippedItems is an array of UUIDs — check against rod UUIDs
+    local rods = getRods()
+    for _, rod in ipairs(rods) do
+        if table.find(equipped, rod.UUID) then return rod.UUID end
+    end
+    return nil
+end
+
 -- ── Character ─────────────────────────────────────────────
 local function chr()  return LocalPlayer.Character end
 local function hrp()  local c=chr() return c and c:FindFirstChild("HumanoidRootPart") end
@@ -250,8 +273,23 @@ local LOCS={
     ["Ancient Ruins"]=Vector3.new(-400,12,500),
     ["Sell NPC"]=Vector3.new(10,5,30),
 }
-local function tpTo(v3)
-    local h=hrp() if h then h.CFrame=CFrame.new(v3+Vector3.new(0,5,0)) end
+-- safeOffset: how many studs above v3 to land. Default 5 for land.
+-- For event boat coordinates (Y≈-1.35) use safeOffset=4.5 to land on deck.
+local function tpTo(v3, safeOffset)
+    local h = hrp()
+    if not h then return end
+    local offset = safeOffset or 5
+    local target = CFrame.new(v3 + Vector3.new(0, offset, 0))
+    -- Set CFrame multiple times over 3 frames so physics doesn't snap it back
+    h.CFrame = target
+    task.defer(function()
+        local h2 = hrp()
+        if h2 then h2.CFrame = target end
+    end)
+    task.delay(0.1, function()
+        local h3 = hrp()
+        if h3 then h3.CFrame = target end
+    end)
 end
 local function tpToPlayer(name)
     local pl=Players:FindFirstChild(name)
@@ -788,14 +826,34 @@ end, 11)
 mkToggle(TabFishing, "Auto Equip Rod", "Equips best rod on enable", false, function(s)
     if s then
         task.spawn(function()
+            -- Wait for Replion data to be ready (may not be on first script run)
+            local attempts = 0
+            local rods = {}
+            repeat
+                task.wait(0.8)
+                rods = getRods()
+                attempts = attempts + 1
+            until #rods > 0 or attempts >= 8
+
+            if #rods == 0 then
+                notify("No rods found in inventory!")
+                return
+            end
+
+            -- Already have one equipped? skip
+            if getEquippedRodUUID() then
+                notify("Rod already equipped!")
+                return
+            end
+
             local ev = getNet("EquipItem", false)
             if ev then
-                for _, item in ipairs(getItems()) do
-                    if tostring(item.Id):lower():find("rod") then
-                        pcall(function() ev:FireServer(item.UUID, "Fishing Rods") end)
-                        notify("Rod equipped!") return
-                    end
-                end
+                -- EquipRod in TileInteraction_1737.lua:
+                -- v_u_14:FireServer(UUID, "Fishing Rods")
+                pcall(function() ev:FireServer(rods[1].UUID, "Fishing Rods") end)
+                notify("Rod equipped: " .. tostring(rods[1].Id or rods[1].UUID))
+            else
+                notify("EquipItem remote not found!")
             end
         end)
     end
@@ -1236,12 +1294,15 @@ local function handleEventStart(evName)
             end)
         end
 
-        -- Auto-TP: spawn new thread so tpTo can yield safely
+        -- Auto-TP: wait 1.5s for the game's own event animation/state to settle
+        -- before overriding the character CFrame, otherwise the game snaps them back
         if EventState.GhostSharkAutoTP then
             task.spawn(function()
-                task.wait(0.3)  -- tiny wait for character to stabilise
-                if hrp() then
-                    tpTo(nearestCoord(GHOST_SHARK_COORDS))
+                task.wait(1.5)
+                local h = hrp()
+                if h then
+                    -- Boat coords are at Y=-1.35, deck height needs +4.5 offset
+                    tpTo(nearestCoord(GHOST_SHARK_COORDS), 4.5)
                     notify("✈ Teleported to Ghost Shark zone!")
                 end
             end)
@@ -1267,9 +1328,10 @@ local function handleEventStart(evName)
         end
         if EventState.MegaAutoTP then
             task.spawn(function()
-                task.wait(0.3)
+                task.wait(1.5)
                 if hrp() then
-                    tpTo(nearestCoord(data.coords))
+                    -- Megalodon Hunt coords at Y=-1.4 (boat/raft), use 4.5 offset
+                    tpTo(nearestCoord(data.coords), 4.5)
                     notify("✈ Teleported to Megalodon zone!")
                 end
             end)
@@ -1283,9 +1345,10 @@ local function handleEventStart(evName)
         end
         if EventState.LeviaAutoTP then
             task.spawn(function()
-                task.wait(0.3)
+                task.wait(1.5)
                 if hrp() then
-                    tpTo(nearestCoord(data.coords))
+                    -- Leviathan zone is underwater/dock, safe offset 4.5
+                    tpTo(nearestCoord(data.coords), 4.5)
                     notify("✈ Teleported to Leviathan zone!")
                 end
             end)
@@ -1299,8 +1362,10 @@ local function handleEventStart(evName)
         end
         if EventState.SharkHuntAutoTP then
             task.spawn(function()
-                task.wait(0.3)
-                if hrp() then tpTo(nearestCoord(data.coords)) end
+                task.wait(1.5)
+                if hrp() then
+                    tpTo(nearestCoord(data.coords), 4.5)
+                end
             end)
         end
 
@@ -1457,7 +1522,7 @@ mkToggle(TabEvents, "Auto Fish During Hunt", "Auto-starts Detector for Ghost Sha
 end, 17)
 
 mkBtn(TabEvents, "🦈  TP to Nearest Ghost Shark Spot", true, function()
-    tpTo(nearestCoord(GHOST_SHARK_COORDS))
+    tpTo(nearestCoord(GHOST_SHARK_COORDS), 4.5)
     notify("Teleported to Ghost Shark Hunt zone!")
 end, 18)
 
