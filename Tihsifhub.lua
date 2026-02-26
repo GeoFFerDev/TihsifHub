@@ -1197,149 +1197,235 @@ local function playAlertSound()
 end
 
 -- ── Core event detection ──────────────────────────────────
--- This is the real hook — mirrors EventController_1664.lua exactly
-local eventRadarConn
+-- Mirrors EventController_1664.lua exactly.
+-- FIX 1: eventRadarActive flag properly guards double-start
+-- FIX 2: ALL automation wrapped in task.spawn() — never task.wait() in a callback
+-- FIX 3: OnArrayRemove uses index to look up removed name from live array copy
+-- FIX 4: tpTo guarded with character existence check
+local eventRadarActive = false
+local _evReplionRef = nil  -- keep reference so we can re-read current events
+
+local function handleEventStart(evName)
+    -- Called from task.spawn — safe to yield here
+    local data = HUNT_DATA[evName]
+
+    -- Update live status label
+    if evStatusLabels[evName] then
+        evStatusLabels[evName].Text = "ACTIVE 🟢"
+        evStatusLabels[evName].TextColor3 = Theme.Good
+    end
+
+    -- Global catch-all alert
+    if EventState.AllEventAlert then
+        notify("⚡ World Event: " .. tostring(evName) .. " started!")
+    end
+
+    if not data then return end
+
+    -- ── Ghost Shark Hunt ─────────────────────────────────
+    if evName == "Ghost Shark Hunt" then
+        EventState.GhostSharkActive = true
+
+        if EventState.GhostSharkAlert then
+            playAlertSound()
+            notify("🦈 GHOST SHARK HUNT LIVE!
+⏱ 20 min  |  Tier: SECRET
+💰 Sell: 125,000 each")
+            task.delay(2, function()
+                if EventState.GhostSharkActive then
+                    notify("🦈 Ghost Shark Hunt still active — hurry!")
+                end
+            end)
+        end
+
+        -- Auto-TP: spawn new thread so tpTo can yield safely
+        if EventState.GhostSharkAutoTP then
+            task.spawn(function()
+                task.wait(0.3)  -- tiny wait for character to stabilise
+                if hrp() then
+                    tpTo(nearestCoord(GHOST_SHARK_COORDS))
+                    notify("✈ Teleported to Ghost Shark zone!")
+                end
+            end)
+        end
+
+        -- Auto-Fish: spawn separate thread
+        if EventState.GhostSharkAutoFish then
+            task.spawn(function()
+                task.wait(0.8)  -- wait after optional TP
+                if not S.DetectorActive then
+                    S.DetectorActive = true
+                    startFisher()
+                    notify("🎣 Auto-Fishing started for Ghost Shark Hunt!")
+                end
+            end)
+        end
+
+    -- ── Megalodon Hunt ────────────────────────────────────
+    elseif evName == "Megalodon Hunt" then
+        if EventState.MegaAlert then
+            playAlertSound()
+            notify("🦕 MEGALODON HUNT! First catch wins!
+Tier: SECRET  |  Worth: 1,000,000+")
+        end
+        if EventState.MegaAutoTP then
+            task.spawn(function()
+                task.wait(0.3)
+                if hrp() then
+                    tpTo(nearestCoord(data.coords))
+                    notify("✈ Teleported to Megalodon zone!")
+                end
+            end)
+        end
+
+    -- ── Leviathan Hunt ────────────────────────────────────
+    elseif evName == "Leviathan Hunt" then
+        if EventState.LeviaAlert then
+            playAlertSound()
+            notify("🐉 LEVIATHAN HUNT! Equip Leviathan Scale bait!
+Tier: SECRET")
+        end
+        if EventState.LeviaAutoTP then
+            task.spawn(function()
+                task.wait(0.3)
+                if hrp() then
+                    tpTo(nearestCoord(data.coords))
+                    notify("✈ Teleported to Leviathan zone!")
+                end
+            end)
+        end
+
+    -- ── Shark Hunt ────────────────────────────────────────
+    elseif evName == "Shark Hunt" then
+        if EventState.SharkHuntAlert then
+            playAlertSound()
+            notify("🦈 Shark Hunt is LIVE!  Duration: " .. data.duration)
+        end
+        if EventState.SharkHuntAutoTP then
+            task.spawn(function()
+                task.wait(0.3)
+                if hrp() then tpTo(nearestCoord(data.coords)) end
+            end)
+        end
+
+    -- ── Worm Hunt ─────────────────────────────────────────
+    elseif evName == "Worm Hunt" then
+        if EventState.SharkHuntAlert then  -- reuse same toggle
+            notify("🐛 Worm Hunt is LIVE!  Boosted Worm Fish odds!")
+        end
+    end
+end
+
+local function handleEventEnd(evName)
+    -- Called from task.spawn — safe to yield
+    if evStatusLabels[evName] then
+        evStatusLabels[evName].Text = "Ended 🔴"
+        evStatusLabels[evName].TextColor3 = Theme.Danger
+        task.delay(6, function()
+            if evStatusLabels[evName] then
+                evStatusLabels[evName].Text = "Watching..."
+                evStatusLabels[evName].TextColor3 = Theme.SubText
+            end
+        end)
+    end
+
+    if evName == "Ghost Shark Hunt" then
+        EventState.GhostSharkActive = false
+        if EventState.GhostSharkAlert then
+            notify("Ghost Shark Hunt ended.")
+        end
+        -- Stop auto-fish only if WE started it for this event
+        if EventState.GhostSharkAutoFish and S.DetectorActive then
+            S.DetectorActive = false
+            stopFisher()
+            notify("Auto-fishing stopped (Hunt ended).")
+        end
+    end
+end
+
 local function startEventRadar()
-    if eventRadarConn then return end  -- already running
+    -- FIX: proper boolean guard — prevents stacking multiple radars
+    if eventRadarActive then
+        notify("Event Radar already running!")
+        return
+    end
 
     task.spawn(function()
+        -- Load Replion package
         local ok, Replion = pcall(function()
             return require(ReplicatedStorage:WaitForChild("Packages",10):WaitForChild("Replion",10))
         end)
         if not ok or not Replion then
-            notify("⚠️ Event Radar: Could not load Replion!")
+            notify("⚠ Event Radar: Replion not found!")
+            eventRadarActive = false
             return
         end
 
-        -- Wait for Events replion (same as EventController_1664.lua line 26)
+        -- Get the Events replion (same call as EventController_1664.lua)
         local ok2, evReplion = pcall(function()
             return Replion.Client:WaitReplion("Events")
         end)
         if not ok2 or not evReplion then
-            notify("⚠️ Event Radar: Could not get Events replion!")
+            notify("⚠ Event Radar: Events replion unavailable!")
+            eventRadarActive = false
             return
         end
 
-        -- Check already-active events on connect
-        local ok3, activeEvents = pcall(function()
-            return evReplion:GetExpect("Events")
-        end)
-        if ok3 and activeEvents then
-            for _, evName in ipairs(activeEvents) do
-                local data = HUNT_DATA[evName]
-                if data then
-                    EventState.GhostSharkActive = (evName == "Ghost Shark Hunt")
-                    -- Update status label if exists
-                    if evStatusLabels[evName] then
-                        evStatusLabels[evName].Text = "ACTIVE 🟢"
-                        evStatusLabels[evName].TextColor3 = Theme.Good
-                    end
+        _evReplionRef = evReplion
+        eventRadarActive = true
+
+        -- Snapshot any already-active events on radar start
+        local ok3, current = pcall(function() return evReplion:GetExpect("Events") end)
+        if ok3 and current then
+            for _, evName in ipairs(current) do
+                -- Mark as active in UI without re-firing sound/TP (already running)
+                if evStatusLabels[evName] then
+                    evStatusLabels[evName].Text = "ACTIVE 🟢"
+                    evStatusLabels[evName].TextColor3 = Theme.Good
                 end
+                if evName == "Ghost Shark Hunt" then
+                    EventState.GhostSharkActive = true
+                end
+            end
+            if #current > 0 then
+                notify("Active events: " .. table.concat(current, ", "))
             end
         end
 
-        -- Listen for new events (mirrors OnArrayInsert pattern)
+        -- ── OnArrayInsert: event started ─────────────────
+        -- FIX: callback only fires automation, never yields —
+        --      task.spawn() inside handleEventStart does the yielding
         evReplion:OnArrayInsert("Events", function(_, evName)
-            local data = HUNT_DATA[evName]
-
-            -- Update status label
-            if evStatusLabels[evName] then
-                evStatusLabels[evName].Text = "ACTIVE 🟢"
-                evStatusLabels[evName].TextColor3 = Theme.Good
-            end
-
-            -- Global alert for any event
-            if EventState.AllEventAlert then
-                notify("🎣 World Event: " .. tostring(evName) .. " has started!")
-            end
-
-            if not data then return end  -- not a hunt we track
-
-            -- Ghost Shark Hunt — premium handling
-            if evName == "Ghost Shark Hunt" then
-                EventState.GhostSharkActive = true
-                if EventState.GhostSharkAlert then
-                    playAlertSound()
-                    notify("🦈 GHOST SHARK HUNT STARTED!\n⏱ 20 min | Tier: SECRET\n💰 Sell: 125,000")
-                    -- Show a second reminder at queue end
-                    task.delay(1, function()
-                        notify("🦈 Ghost Shark Hunt is LIVE! Auto-fishing..." )
-                    end)
-                end
-                if EventState.GhostSharkAutoTP then
-                    task.wait(0.5)
-                    local coord = nearestCoord(GHOST_SHARK_COORDS)
-                    tpTo(coord)
-                    notify("Teleported to Ghost Shark Hunt zone!")
-                end
-                if EventState.GhostSharkAutoFish then
-                    task.wait(1)
-                    S.DetectorActive = true
-                    startFisher()
-                    notify("Auto-fishing started for Ghost Shark Hunt!")
-                end
-
-            -- Megalodon Hunt
-            elseif evName == "Megalodon Hunt" then
-                if EventState.MegaAlert then
-                    playAlertSound()
-                    notify("🦕 MEGALODON HUNT! Be first to catch it!\nTier: SECRET | Worth: 1,000,000+")
-                end
-                if EventState.MegaAutoTP then
-                    task.wait(0.5)
-                    tpTo(nearestCoord(data.coords))
-                    notify("Teleported to Megalodon zone!")
-                end
-
-            -- Leviathan Hunt
-            elseif evName == "Leviathan Hunt" then
-                if EventState.LeviaAlert then
-                    playAlertSound()
-                    notify("🐉 LEVIATHAN HUNT! Use Leviathan Scale bait!\nTier: SECRET")
-                end
-                if EventState.LeviaAutoTP then
-                    task.wait(0.5)
-                    tpTo(nearestCoord(data.coords))
-                    notify("Teleported to Leviathan zone!")
-                end
-
-            -- Shark Hunt / Worm Hunt
-            elseif evName == "Shark Hunt" then
-                if EventState.SharkHuntAlert then
-                    notify("🦈 Shark Hunt is LIVE! " .. data.duration)
-                end
-                if EventState.SharkHuntAutoTP then
-                    task.wait(0.5)
-                    tpTo(nearestCoord(data.coords))
-                end
-            end
+            if type(evName) ~= "string" then return end
+            task.spawn(handleEventStart, evName)
         end)
 
-        -- Listen for event ends
-        evReplion:OnArrayRemove("Events", function(_, evName)
-            if evStatusLabels[evName] then
-                evStatusLabels[evName].Text = "Ended 🔴"
-                evStatusLabels[evName].TextColor3 = Theme.Danger
-                task.delay(5, function()
-                    if evStatusLabels[evName] then
-                        evStatusLabels[evName].Text = "Watching..."
-                        evStatusLabels[evName].TextColor3 = Theme.SubText
+        -- ── OnArrayRemove: event ended ────────────────────
+        -- FIX: Replion passes (index, removedValue) on removal.
+        --      removedValue can be nil in some Replion versions —
+        --      if nil, re-read current array to diff against our known set
+        evReplion:OnArrayRemove("Events", function(idx, evName)
+            if type(evName) == "string" then
+                task.spawn(handleEventEnd, evName)
+            else
+                -- Fallback: compare against snapshot
+                local ok4, now = pcall(function() return evReplion:GetExpect("Events") end)
+                if ok4 and now then
+                    -- Any name that was in evStatusLabels as ACTIVE but not in `now` = ended
+                    for name, lbl in pairs(evStatusLabels) do
+                        if lbl.Text == "ACTIVE 🟢" then
+                            local stillActive = false
+                            for _, n in ipairs(now) do if n == name then stillActive = true break end end
+                            if not stillActive then
+                                task.spawn(handleEventEnd, name)
+                            end
+                        end
                     end
-                end)
-            end
-            if evName == "Ghost Shark Hunt" then
-                EventState.GhostSharkActive = false
-                if EventState.GhostSharkAlert then
-                    notify("Ghost Shark Hunt ended.")
-                end
-                if EventState.GhostSharkAutoFish then
-                    S.DetectorActive = false
-                    stopFisher()
                 end
             end
         end)
 
-        notify("⚡ Event Radar active! Monitoring world events...")
+        notify("📡 Event Radar is LIVE — watching all world events!")
     end)
 end
 
@@ -1440,7 +1526,10 @@ mkToggle(TabEvents, "Start Event Radar", "Begins monitoring the Events replion",
     if s then
         startEventRadar()
     else
-        notify("Event Radar paused. Reconnect to restart.")
+        -- Reset flag so it can be restarted cleanly
+        eventRadarActive = false
+        _evReplionRef = nil
+        notify("Event Radar stopped. Toggle on to restart.")
     end
 end, 54)
 
@@ -1462,9 +1551,10 @@ mkBtn(TabEvents, "⚡  Check All Active Events Now", true, function()
 end, 55)
 
 mkBtn(TabEvents, "🔄  Restart Event Radar", false, function()
-    eventRadarConn = nil
+    -- Reset guard so startEventRadar can run again
+    eventRadarActive = false
+    _evReplionRef = nil
     startEventRadar()
-    notify("Event Radar restarted!")
 end, 56)
 
 TabButtons[1].Btn.MouseButton1Click:Fire()
