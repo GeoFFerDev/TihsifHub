@@ -1228,9 +1228,7 @@ local function handleEventStart(evName)
 
         if EventState.GhostSharkAlert then
             playAlertSound()
-            notify("🦈 GHOST SHARK HUNT LIVE!
-⏱ 20 min  |  Tier: SECRET
-💰 Sell: 125,000 each")
+            notify("🦈 GHOST SHARK HUNT LIVE! 20min | SECRET | Sell: 125,000")
             task.delay(2, function()
                 if EventState.GhostSharkActive then
                     notify("🦈 Ghost Shark Hunt still active — hurry!")
@@ -1265,8 +1263,7 @@ local function handleEventStart(evName)
     elseif evName == "Megalodon Hunt" then
         if EventState.MegaAlert then
             playAlertSound()
-            notify("🦕 MEGALODON HUNT! First catch wins!
-Tier: SECRET  |  Worth: 1,000,000+")
+            notify("🦕 MEGALODON HUNT! First catch wins! | SECRET | 1,000,000+")
         end
         if EventState.MegaAutoTP then
             task.spawn(function()
@@ -1282,8 +1279,7 @@ Tier: SECRET  |  Worth: 1,000,000+")
     elseif evName == "Leviathan Hunt" then
         if EventState.LeviaAlert then
             playAlertSound()
-            notify("🐉 LEVIATHAN HUNT! Equip Leviathan Scale bait!
-Tier: SECRET")
+            notify("🐉 LEVIATHAN HUNT! Equip Leviathan Scale bait! | SECRET")
         end
         if EventState.LeviaAutoTP then
             task.spawn(function()
@@ -1466,7 +1462,7 @@ mkBtn(TabEvents, "🦈  TP to Nearest Ghost Shark Spot", true, function()
 end, 18)
 
 mkBtn(TabEvents, "📋  Ghost Shark Hunt Info", false, function()
-    notify("Ghost Shark Hunt\nQueue: 4 min | Active: 20 min\n3 spawn zones across the map\nGhost Shark: SECRET, 2e-6 chance")
+    notify("Ghost Shark Hunt | Queue: 4min | Active: 20min | SECRET, prob 2e-6")
 end, 19)
 
 -- ─ Megalodon Hunt ─────────────────────────────────────────
@@ -1543,7 +1539,7 @@ mkBtn(TabEvents, "⚡  Check All Active Events Now", true, function()
         if not ok2 then notify("Cannot get Events replion!") return end
         local ok3, evList = pcall(function() return evRep:GetExpect("Events") end)
         if ok3 and evList and #evList > 0 then
-            notify("Active Events:\n" .. table.concat(evList, "\n"))
+            notify("Active: " .. table.concat(evList, ", "))
         else
             notify("No world events currently active.")
         end
