@@ -294,11 +294,12 @@ iconStroke.Thickness = 2
 -- ── Main Frame ────────────────────────────────────────────
 -- EXACT same structure as template — NO ZIndex tweaks
 local MainFrame = Instance.new("Frame", ScreenGui)
-MainFrame.Size = UDim2.new(0, 490, 0, 340)
-MainFrame.Position = UDim2.new(0.5, -240, 0.5, -150)
+MainFrame.Size = UDim2.new(0, 450, 0, 270)
+MainFrame.Position = UDim2.new(0.5, -225, 0.5, -135)
 MainFrame.BackgroundColor3 = Theme.Background
-MainFrame.BackgroundTransparency = 0.1
+MainFrame.BackgroundTransparency = 0.40
 MainFrame.Active = true
+MainFrame.ClipsDescendants = true
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 8)
 local mainStroke = Instance.new("UIStroke", MainFrame)
 mainStroke.Color = Theme.Stroke
@@ -378,24 +379,33 @@ EnableDrag(MainFrame, TopBar)
 EnableDrag(ToggleIcon, ToggleIcon)
 
 -- ── Sidebar — same as template ────────────────────────────
-local Sidebar = Instance.new("Frame", MainFrame)
-Sidebar.Size = UDim2.new(0, 110, 1, -30)
+local Sidebar = Instance.new("ScrollingFrame", MainFrame)
+Sidebar.Size = UDim2.new(0, 100, 1, -30)
 Sidebar.Position = UDim2.new(0, 0, 0, 30)
 Sidebar.BackgroundColor3 = Theme.Sidebar
-Sidebar.BackgroundTransparency = 0.5
+Sidebar.BackgroundTransparency = 0.55
 Sidebar.BorderSizePixel = 0
+Sidebar.ScrollBarThickness = 0          -- hidden scrollbar, touch-scrollable
+Sidebar.AutomaticCanvasSize = Enum.AutomaticSize.Y
+Sidebar.CanvasSize = UDim2.new(0,0,0,0)
+Sidebar.ScrollingDirection = Enum.ScrollingDirection.Y
+Sidebar.ClipsDescendants = true
 Instance.new("UICorner", Sidebar).CornerRadius = UDim.new(0, 8)
 
 local SidebarLayout = Instance.new("UIListLayout", Sidebar)
-SidebarLayout.Padding = UDim.new(0, 5)
+SidebarLayout.Padding = UDim.new(0, 4)
 SidebarLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-Instance.new("UIPadding", Sidebar).PaddingTop = UDim.new(0, 10)
+SidebarLayout.SortOrder = Enum.SortOrder.LayoutOrder
+local sbPad = Instance.new("UIPadding", Sidebar)
+sbPad.PaddingTop = UDim.new(0, 8)
+sbPad.PaddingBottom = UDim.new(0, 8)
 
--- ── Content area — same as template ──────────────────────
+-- ── Content area ─────────────────────────────────────────
 local ContentArea = Instance.new("Frame", MainFrame)
-ContentArea.Size = UDim2.new(1, -120, 1, -30)
-ContentArea.Position = UDim2.new(0, 115, 0, 30)
+ContentArea.Size = UDim2.new(1, -108, 1, -30)
+ContentArea.Position = UDim2.new(0, 104, 0, 30)
 ContentArea.BackgroundTransparency = 1
+ContentArea.ClipsDescendants = true      -- CRITICAL: scroll stays inside window
 
 -- ── Tab system — same as template ────────────────────────
 local Tabs = {}
@@ -404,14 +414,16 @@ local TabButtons = {}
 local function CreateTab(name, icon)
     -- Tab content scrolling frame (same as template)
     local TabFrame = Instance.new("ScrollingFrame", ContentArea)
-    TabFrame.Size = UDim2.new(1, 0, 1, -10)
+    TabFrame.Size = UDim2.new(1, 0, 1, 0)
     TabFrame.BackgroundTransparency = 1
-    TabFrame.ScrollBarThickness = 3
+    TabFrame.ScrollBarThickness = 4
     TabFrame.ScrollBarImageColor3 = Theme.Accent
+    TabFrame.ScrollingDirection = Enum.ScrollingDirection.Y
     TabFrame.Visible = false
     TabFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
     TabFrame.CanvasSize = UDim2.new(0,0,0,0)
     TabFrame.BorderSizePixel = 0
+    TabFrame.ClipsDescendants = true      -- content clips to tab area
 
     local Layout = Instance.new("UIListLayout", TabFrame)
     Layout.Padding = UDim.new(0, 8)
@@ -422,13 +434,13 @@ local function CreateTab(name, icon)
 
     -- Sidebar button (same as template)
     local TabBtn = Instance.new("TextButton", Sidebar)
-    TabBtn.Size = UDim2.new(0.9, 0, 0, 30)
+    TabBtn.Size = UDim2.new(0.92, 0, 0, 27)
     TabBtn.BackgroundColor3 = Theme.Accent
     TabBtn.BackgroundTransparency = 1
     TabBtn.Text = "  "..icon.." "..name
     TabBtn.TextColor3 = Theme.SubText
     TabBtn.Font = Enum.Font.GothamMedium
-    TabBtn.TextSize = 12
+    TabBtn.TextSize = 11
     TabBtn.TextXAlignment = Enum.TextXAlignment.Left
     Instance.new("UICorner", TabBtn).CornerRadius = UDim.new(0, 5)
 
