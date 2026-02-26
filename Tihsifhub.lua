@@ -58,7 +58,11 @@ local S = {
     ShowPing=false, WalkOnWater=false, FreezePlayer=false,
     WalkSpeed=false, WalkSpeedVal=50, Noclip=false, InfJump=false,
     TradeMinRarity="Any",
+    AutoMegalodonPatrol=false, MegaPatrolInterval=22,
+    AutoLuckPotion=false,
 }
+
+local EventState
 
 -- ============================================================
 -- NETWORK HELPERS (confirmed pattern from AFKController_1689.lua:
@@ -108,6 +112,21 @@ local function getItems()
     return ok and v or {}
 end
 
+local function getNum(v)
+    if typeof(v) == "number" then return v end
+    if typeof(v) == "string" then return tonumber(v) end
+    return nil
+end
+
+local function getDeep(t, path)
+    local cur = t
+    for _, key in ipairs(path) do
+        if typeof(cur) ~= "table" then return nil end
+        cur = cur[key]
+    end
+    return cur
+end
+
 local function getRods()
     local d = getRepData()
     if not d then return {} end
@@ -125,6 +144,76 @@ local function getEquippedRodUUID()
         if table.find(equipped, rod.UUID) then return rod.UUID end
     end
     return nil
+end
+
+local function scoreRod(rod)
+    if typeof(rod) ~= "table" then return -math.huge end
+    -- Prefer high luck + resilience/strength + click power + max weight.
+    local luck = getNum(getDeep(rod, {"RollData", "BaseLuck"})) or getNum(rod.BaseLuck) or 0
+    local resilience = getNum(rod.Resilience) or getNum(rod.Strength) or 0
+    local clickPower = getNum(rod.ClickPower) or 0
+    local maxWeight = getNum(rod.MaxWeight) or 0
+    local tier = getNum(getDeep(rod, {"Data", "Tier"})) or getNum(rod.Tier) or 0
+    return luck * 10000 + resilience * 1200 + clickPower * 700 + maxWeight * 0.02 + tier
+end
+
+local function bestRod()
+    local rods = getRods()
+    local best, bestScore
+    for _, rod in ipairs(rods) do
+        local s = scoreRod(rod)
+        if not bestScore or s > bestScore then
+            best = rod
+            bestScore = s
+        end
+    end
+    return best
+end
+
+local function equipBestRod()
+    local targetRod = bestRod()
+    if not targetRod or not targetRod.UUID then
+        notify("No rods found!")
+        return false
+    end
+    local equipped = getEquippedRodUUID()
+    if equipped and equipped == targetRod.UUID then
+        notify("Best rod already equipped: "..tostring(targetRod.Id or targetRod.UUID))
+        return true
+    end
+    local ev = getNet("EquipItem", false)
+    if not ev then
+        notify("EquipItem remote not found!")
+        return false
+    end
+    pcall(function() ev:FireServer(targetRod.UUID, "Fishing Rods") end)
+    notify(("Equipped best rod: %s (Luck %.2f, Strength %.2f)"):format(
+        tostring(targetRod.Id or targetRod.UUID),
+        getNum(getDeep(targetRod, {"RollData", "BaseLuck"})) or 0,
+        getNum(targetRod.Resilience) or getNum(targetRod.Strength) or 0
+    ))
+    return true
+end
+
+local function useBestLuckPotion()
+    local consumeRF = getNet("ConsumeItem", true)
+    if not consumeRF then return false end
+    local bestPotion, bestRank
+    for _, item in ipairs(getItems()) do
+        local id = tostring(item.Id or item.Name or "")
+        local l = id:lower()
+        if l:find("luck") and (l:find("potion") or l:find("totem")) then
+            local rank = tonumber(id:match("(%d+)%s*I?I?I?")) or 1
+            if not bestRank or rank > bestRank then
+                bestRank = rank
+                bestPotion = item
+            end
+        end
+    end
+    if bestPotion and bestPotion.UUID then
+        return pcall(function() consumeRF:InvokeServer(bestPotion.UUID) end)
+    end
+    return false
 end
 
 -- Character helpers ───────────────────────────────────────
@@ -329,7 +418,7 @@ local function _setupFishListeners()
             end
         end))
     end
-end
+    end
 
 -- INSTANT-CATCH HOOK (always running when detector is active)
 -- Hooks FishingMinigameChanged and immediately completes on "Activated"
@@ -365,6 +454,7 @@ local function startFisher()
     S.DetectorTime   = 0
 
     fishThread = task.spawn(function()
+        equipBestRod()
         -- ── Step 1: Try game built-in auto-fishing ──────────────
         -- Confirmed from source: AutoFishingLevel = 0 = always available
         -- Remote: UpdateAutoFishingState (RemoteFunction):InvokeServer(bool)
@@ -431,6 +521,26 @@ local function startFisher()
     end)
 end
 
+local megaPatrolThread
+local function stopMegaPatrol()
+    if megaPatrolThread then pcall(task.cancel, megaPatrolThread) megaPatrolThread = nil end
+end
+
+local function startMegaPatrol(coords)
+    stopMegaPatrol()
+    if not coords or #coords == 0 then return end
+    megaPatrolThread = task.spawn(function()
+        local idx = 1
+        while EventState and EventState.MegaActive and S.AutoMegalodonPatrol do
+            if not S.WalkOnWater then S.WalkOnWater = true toggleWoW(true) end
+            tpTo(coords[idx], 3)
+            S.DetectorStatus = ("Megalodon patrol %d/%d"):format(idx, #coords)
+            idx = (idx % #coords) + 1
+            task.wait(math.max(6, S.MegaPatrolInterval))
+        end
+    end)
+end
+
 local function stopFisher()
     S.DetectorActive = false
     if fishThread then pcall(task.cancel, fishThread) fishThread = nil end
@@ -483,6 +593,18 @@ local favThread
 local function startFav()
     if favThread then task.cancel(favThread) end
     favThread = task.spawn(function() while S.AutoFavorite do runFavLoop() task.wait(3) end end)
+end
+
+local potionThread
+local function startPotionLoop()
+    if potionThread then pcall(task.cancel, potionThread) end
+    potionThread = task.spawn(function()
+        while S.AutoLuckPotion do
+            local ok = useBestLuckPotion()
+            if ok then notify("🍀 Used best available luck potion/totem.") end
+            task.wait(25)
+        end
+    end)
 end
 
 local function unfavAll()
@@ -956,7 +1078,7 @@ local function mkDrop(parent, label, opts, default, cb, order)
     ml.Padding = UDim.new(0, 1)
     local mp = Instance.new("UIPadding", menu)
     mp.PaddingTop = UDim.new(0, 3) mp.PaddingBottom = UDim.new(0, 3)
-
+    
     local isOpen = false
     for _, opt in ipairs(opts) do
         local ob = Instance.new("TextButton", menu)
@@ -1055,24 +1177,7 @@ end, 11)
 
 mkToggle(TabFishing, "Auto Equip Rod", "Equips best rod on enable", false, function(s)
     if s then
-        task.spawn(function()
-            local attempts = 0
-            local rods = {}
-            repeat task.wait(0.8) rods = getRods() attempts = attempts + 1
-            until #rods > 0 or attempts >= 8
-
-            if #rods == 0 then notify("No rods found!") return end
-            if getEquippedRodUUID() then notify("Rod already equipped!") return end
-
-            local ev = getNet("EquipItem", false)
-            if ev then
-                -- Pattern: ev:FireServer(UUID, "Fishing Rods") — confirmed from TileInteraction source
-                pcall(function() ev:FireServer(rods[1].UUID, "Fishing Rods") end)
-                notify("Rod equipped: "..tostring(rods[1].Id or rods[1].UUID))
-            else
-                notify("EquipItem remote not found!")
-            end
-        end)
+        task.spawn(equipBestRod)
     end
 end, 12)
 
@@ -1204,7 +1309,10 @@ mkSection(TabAuto, "  Totem / Potion / Enchant", 50)
 mkToggle(TabAuto, "Auto Use Totem", "Activates totems automatically", false, function(s)
     -- Hook: use ItemActivated or similar when implemented
 end, 51)
-mkToggle(TabAuto, "Auto Drink Luck Potion", "Uses luck potions when found", false, function(s) end, 52)
+mkToggle(TabAuto, "Auto Drink Luck Potion", "Uses best luck potion/totem every 25s", false, function(s)
+    S.AutoLuckPotion = s
+    if s then startPotionLoop() elseif potionThread then pcall(task.cancel, potionThread) potionThread=nil end
+end, 52)
 mkToggle(TabAuto, "Auto Enchant Fish", "Auto-uses enchant stones", false, function(s) end, 53)
 
 -- ============================================================
@@ -1400,9 +1508,9 @@ end, 33)
 -- Megalodon coords from MegalondonHunt game source
 -- ============================================================
 
-local EventState = {
+EventState = {
     GhostSharkAlert=true, GhostSharkAutoTP=false, GhostSharkAutoFish=false, GhostSharkActive=false,
-    MegaAlert=true,  MegaAutoTP=false,
+    MegaAlert=true,  MegaAutoTP=false, MegaAutoFish=false, MegaActive=false,
     LeviaAlert=true, LeviaAutoTP=false,
     SharkHuntAlert=true, SharkHuntAutoTP=false,
     AllEventAlert=true,
@@ -1493,6 +1601,9 @@ local function handleEventEnd(evName)
     end
     if evName == "Ghost Shark Hunt" then
         EventState.GhostSharkActive = false
+    elseif evName == "Megalodon Hunt" then
+        EventState.MegaActive = false
+        stopMegaPatrol()
     end
     notify("⬛ Event ended: "..tostring(evName))
 end
@@ -1547,11 +1658,29 @@ local function handleEventStart(evName)
         end
 
     elseif evName == "Megalodon Hunt" then
+        EventState.MegaActive = true
         if EventState.MegaAlert then
             playAlertSound()
             notify("🦕 MEGALODON HUNT! 1 per server — be first! | SECRET | 1M+ coins")
         end
         if EventState.MegaAutoTP then task.spawn(doOceanTP) end
+        if EventState.MegaAutoFish then
+            task.spawn(function()
+                task.wait(2.5)
+                equipBestRod()
+                if S.AutoMegalodonPatrol then
+                    startMegaPatrol(data.coords)
+                else
+                    tpTo(nearestCoord(data.coords), 3)
+                end
+                if not S.DetectorActive then
+                    S.FreezePlayer = true
+                    S.DetectorActive = true
+                    startFisher()
+                end
+                notify("🎣 Megalodon auto-fish enabled (rod + patrol + instant catch).")
+            end)
+        end
 
     elseif evName == "Leviathan Hunt" then
         if EventState.LeviaAlert then
@@ -1604,6 +1733,7 @@ local function startEventRadar()
                     evStatusLabels[evName].TextColor3 = Theme.Good
                 end
                 if evName == "Ghost Shark Hunt" then EventState.GhostSharkActive = true end
+                if evName == "Megalodon Hunt" then EventState.MegaActive = true end
             end
             if #current > 0 then
                 notify("Currently active: "..table.concat(current, ", "))
@@ -1677,18 +1807,38 @@ end, 23)
 mkToggle(TabEvents, "Auto TP to Megalodon Zone", "Teleport on event start", false, function(s)
     EventState.MegaAutoTP = s
 end, 24)
+mkToggle(TabEvents, "Auto Fish During Megalodon", "Equip best rod + start detector", false, function(s)
+    EventState.MegaAutoFish = s
+    if not s then
+        stopMegaPatrol()
+    elseif EventState.MegaActive then
+        startMegaPatrol(HUNT_DATA["Megalodon Hunt"].coords)
+    end
+end, 25)
+mkToggle(TabEvents, "Patrol both Megalodon spots", "Switch spots repeatedly while event is live", false, function(s)
+    S.AutoMegalodonPatrol = s
+    if not s then
+        stopMegaPatrol()
+    elseif EventState.MegaActive then
+        startMegaPatrol(HUNT_DATA["Megalodon Hunt"].coords)
+    end
+end, 26)
+mkInput(TabEvents, "Megalodon patrol interval (sec)", tostring(S.MegaPatrolInterval), function(v)
+    local n = tonumber(v)
+    if n then S.MegaPatrolInterval = math.max(6, n) end
+end, 27)
 mkBtn(TabEvents, "🦕 TP to Megalodon Spot 1", false, function()
     S.WalkOnWater = true toggleWoW(true)
     task.wait(0.3)
     tpTo(Vector3.new(-1076.3, -1.4, 1676.2), 3)
     notify("→ Megalodon Spot 1! WalkOnWater enabled.")
-end, 25)
+end, 28)
 mkBtn(TabEvents, "🦕 TP to Megalodon Spot 2", false, function()
     S.WalkOnWater = true toggleWoW(true)
     task.wait(0.3)
     tpTo(Vector3.new(-1191.8, -1.4, 3597.3), 3)
     notify("→ Megalodon Spot 2! WalkOnWater enabled.")
-end, 26)
+end, 29)
 
 mkSection(TabEvents, "  🐉 Leviathan Hunt [SECRET]", 30)
 mkLabel(TabEvents, "Requires: Leviathan Scale bait. 1 per server!", Theme.Warn, 31)
