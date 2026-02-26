@@ -294,7 +294,7 @@ iconStroke.Thickness = 2
 -- ── Main Frame ────────────────────────────────────────────
 -- EXACT same structure as template — NO ZIndex tweaks
 local MainFrame = Instance.new("Frame", ScreenGui)
-MainFrame.Size = UDim2.new(0, 480, 0, 300)
+MainFrame.Size = UDim2.new(0, 490, 0, 340)
 MainFrame.Position = UDim2.new(0.5, -240, 0.5, -150)
 MainFrame.BackgroundColor3 = Theme.Background
 MainFrame.BackgroundTransparency = 0.1
@@ -406,7 +406,7 @@ local function CreateTab(name, icon)
     local TabFrame = Instance.new("ScrollingFrame", ContentArea)
     TabFrame.Size = UDim2.new(1, 0, 1, -10)
     TabFrame.BackgroundTransparency = 1
-    TabFrame.ScrollBarThickness = 2
+    TabFrame.ScrollBarThickness = 3
     TabFrame.ScrollBarImageColor3 = Theme.Accent
     TabFrame.Visible = false
     TabFrame.AutomaticCanvasSize = Enum.AutomaticSize.Y
@@ -730,6 +730,7 @@ local TabMenu     = CreateTab("Menu",     "≡")
 local TabQuest    = CreateTab("Quest",    "Q")
 local TabTeleport = CreateTab("Teleport", "TP")
 local TabMisc     = CreateTab("Misc",     "🔧")
+local TabEvents   = CreateTab("Events",   "⚡")
 
 -- ============================================================
 -- ▶ INFO TAB
@@ -1071,6 +1072,389 @@ end, 42)
 -- ============================================================
 -- OPEN FIRST TAB — direct call, no :Fire() trick
 -- ============================================================
+-- ============================================================
+-- ⚡ PREMIUM EVENTS TAB
+-- Uses the real game event system:
+--   Replion.Client:WaitReplion("Events"):OnArrayInsert("Events", cb)
+--   Ghost Shark Hunt: QueueTime=240s, Duration=1200s, Tier=SECRET
+--   Coordinates from Ghost Shark Hunt_315.lua
+-- ============================================================
+
+-- ── Event state ───────────────────────────────────────────
+local EventState = {
+    -- Ghost Shark
+    GhostSharkAlert     = true,   -- notify when detected
+    GhostSharkAutoTP    = false,  -- auto-teleport to hunt
+    GhostSharkAutoFish  = false,  -- auto-start fishing when event starts
+    GhostSharkActive    = false,
+    -- Megalodon
+    MegaAlert  = true,
+    MegaAutoTP = false,
+    -- Leviathan
+    LeviaAlert  = true,
+    LeviaAutoTP = false,
+    -- Shark Hunt
+    SharkHuntAlert  = true,
+    SharkHuntAutoTP = false,
+    -- Global
+    AllEventAlert   = true,
+    EventRadar      = false,  -- running flag
+}
+
+-- Ghost Shark Hunt coordinates (from Ghost Shark Hunt_315.lua)
+local GHOST_SHARK_COORDS = {
+    Vector3.new(489.559,    -1.35, 25.406),
+    Vector3.new(-1358.216,  -1.35, 4100.556),
+    Vector3.new(627.859,    -1.35, 3798.081),
+}
+
+-- All hunts: name → { coords, tier, desc }
+local HUNT_DATA = {
+    ["Ghost Shark Hunt"]  = {
+        coords   = GHOST_SHARK_COORDS,
+        tier     = "SECRET 🟣",
+        fish     = "Ghost Shark",
+        sellVal  = "125,000",
+        duration = "20 min",
+        queueSec = 240,
+    },
+    ["Shark Hunt"]        = {
+        coords   = {Vector3.new(1.65,-1.35,2095.725), Vector3.new(1369.95,-1.35,930.125)},
+        tier     = "Epic 🟠",
+        fish     = "Sharks",
+        sellVal  = "varies",
+        duration = "30 min",
+        queueSec = 240,
+    },
+    ["Megalodon Hunt"]    = {
+        coords   = {Vector3.new(-1076.3,-1.4,1676.2), Vector3.new(-1191.8,-1.4,3597.3)},
+        tier     = "SECRET 🟣",
+        fish     = "Megalodon",
+        sellVal  = "1,000,000+",
+        duration = "Until caught",
+        queueSec = 0,
+    },
+    ["Leviathan Hunt"]    = {
+        coords   = {Vector3.new(-62, -1.4, 2767)},
+        tier     = "SECRET 🟣",
+        fish     = "Leviathan",
+        sellVal  = "1,000,000+",
+        duration = "Until caught",
+        queueSec = 0,
+    },
+    ["Worm Hunt"]         = {
+        coords   = {Vector3.new(2190.85,-1.4,97.575)},
+        tier     = "Rare 🔵",
+        fish     = "Worm Fish",
+        sellVal  = "varies",
+        duration = "30 min",
+        queueSec = 240,
+    },
+    ["Treasure Hunt"]     = {
+        coords   = {Vector3.new(0,5,0)},
+        tier     = "Legendary 🟡",
+        fish     = "Treasure",
+        sellVal  = "high",
+        duration = "varies",
+        queueSec = 0,
+    },
+}
+
+-- Status labels (updated live)
+local evStatusLabels = {}   -- eventName -> label widget
+
+-- ── Closest coord helper ──────────────────────────────────
+local function nearestCoord(coords)
+    local h = hrp()
+    if not h then return coords[1] end
+    local best, bestDist = coords[1], math.huge
+    for _, c in ipairs(coords) do
+        local d = (h.Position - c).Magnitude
+        if d < bestDist then bestDist = d best = c end
+    end
+    return best
+end
+
+-- ── Ghost Shark sound alert ───────────────────────────────
+local function playAlertSound()
+    local snd = Instance.new("Sound", workspace)
+    snd.SoundId = "rbxassetid://4612556715"  -- Roblox ping sound
+    snd.Volume = 0.8
+    snd:Play()
+    game:GetService("Debris"):AddItem(snd, 3)
+end
+
+-- ── Core event detection ──────────────────────────────────
+-- This is the real hook — mirrors EventController_1664.lua exactly
+local eventRadarConn
+local function startEventRadar()
+    if eventRadarConn then return end  -- already running
+
+    task.spawn(function()
+        local ok, Replion = pcall(function()
+            return require(ReplicatedStorage:WaitForChild("Packages",10):WaitForChild("Replion",10))
+        end)
+        if not ok or not Replion then
+            notify("⚠️ Event Radar: Could not load Replion!")
+            return
+        end
+
+        -- Wait for Events replion (same as EventController_1664.lua line 26)
+        local ok2, evReplion = pcall(function()
+            return Replion.Client:WaitReplion("Events")
+        end)
+        if not ok2 or not evReplion then
+            notify("⚠️ Event Radar: Could not get Events replion!")
+            return
+        end
+
+        -- Check already-active events on connect
+        local ok3, activeEvents = pcall(function()
+            return evReplion:GetExpect("Events")
+        end)
+        if ok3 and activeEvents then
+            for _, evName in ipairs(activeEvents) do
+                local data = HUNT_DATA[evName]
+                if data then
+                    EventState.GhostSharkActive = (evName == "Ghost Shark Hunt")
+                    -- Update status label if exists
+                    if evStatusLabels[evName] then
+                        evStatusLabels[evName].Text = "ACTIVE 🟢"
+                        evStatusLabels[evName].TextColor3 = Theme.Good
+                    end
+                end
+            end
+        end
+
+        -- Listen for new events (mirrors OnArrayInsert pattern)
+        evReplion:OnArrayInsert("Events", function(_, evName)
+            local data = HUNT_DATA[evName]
+
+            -- Update status label
+            if evStatusLabels[evName] then
+                evStatusLabels[evName].Text = "ACTIVE 🟢"
+                evStatusLabels[evName].TextColor3 = Theme.Good
+            end
+
+            -- Global alert for any event
+            if EventState.AllEventAlert then
+                notify("🎣 World Event: " .. tostring(evName) .. " has started!")
+            end
+
+            if not data then return end  -- not a hunt we track
+
+            -- Ghost Shark Hunt — premium handling
+            if evName == "Ghost Shark Hunt" then
+                EventState.GhostSharkActive = true
+                if EventState.GhostSharkAlert then
+                    playAlertSound()
+                    notify("🦈 GHOST SHARK HUNT STARTED!\n⏱ 20 min | Tier: SECRET\n💰 Sell: 125,000")
+                    -- Show a second reminder at queue end
+                    task.delay(1, function()
+                        notify("🦈 Ghost Shark Hunt is LIVE! Auto-fishing..." )
+                    end)
+                end
+                if EventState.GhostSharkAutoTP then
+                    task.wait(0.5)
+                    local coord = nearestCoord(GHOST_SHARK_COORDS)
+                    tpTo(coord)
+                    notify("Teleported to Ghost Shark Hunt zone!")
+                end
+                if EventState.GhostSharkAutoFish then
+                    task.wait(1)
+                    S.DetectorActive = true
+                    startFisher()
+                    notify("Auto-fishing started for Ghost Shark Hunt!")
+                end
+
+            -- Megalodon Hunt
+            elseif evName == "Megalodon Hunt" then
+                if EventState.MegaAlert then
+                    playAlertSound()
+                    notify("🦕 MEGALODON HUNT! Be first to catch it!\nTier: SECRET | Worth: 1,000,000+")
+                end
+                if EventState.MegaAutoTP then
+                    task.wait(0.5)
+                    tpTo(nearestCoord(data.coords))
+                    notify("Teleported to Megalodon zone!")
+                end
+
+            -- Leviathan Hunt
+            elseif evName == "Leviathan Hunt" then
+                if EventState.LeviaAlert then
+                    playAlertSound()
+                    notify("🐉 LEVIATHAN HUNT! Use Leviathan Scale bait!\nTier: SECRET")
+                end
+                if EventState.LeviaAutoTP then
+                    task.wait(0.5)
+                    tpTo(nearestCoord(data.coords))
+                    notify("Teleported to Leviathan zone!")
+                end
+
+            -- Shark Hunt / Worm Hunt
+            elseif evName == "Shark Hunt" then
+                if EventState.SharkHuntAlert then
+                    notify("🦈 Shark Hunt is LIVE! " .. data.duration)
+                end
+                if EventState.SharkHuntAutoTP then
+                    task.wait(0.5)
+                    tpTo(nearestCoord(data.coords))
+                end
+            end
+        end)
+
+        -- Listen for event ends
+        evReplion:OnArrayRemove("Events", function(_, evName)
+            if evStatusLabels[evName] then
+                evStatusLabels[evName].Text = "Ended 🔴"
+                evStatusLabels[evName].TextColor3 = Theme.Danger
+                task.delay(5, function()
+                    if evStatusLabels[evName] then
+                        evStatusLabels[evName].Text = "Watching..."
+                        evStatusLabels[evName].TextColor3 = Theme.SubText
+                    end
+                end)
+            end
+            if evName == "Ghost Shark Hunt" then
+                EventState.GhostSharkActive = false
+                if EventState.GhostSharkAlert then
+                    notify("Ghost Shark Hunt ended.")
+                end
+                if EventState.GhostSharkAutoFish then
+                    S.DetectorActive = false
+                    stopFisher()
+                end
+            end
+        end)
+
+        notify("⚡ Event Radar active! Monitoring world events...")
+    end)
+end
+
+-- ============================================================
+-- BUILD EVENTS TAB UI
+-- ============================================================
+
+-- ─ Ghost Shark Hunt ──────────────────────────────────────
+mkSection(TabEvents, "  🦈  Ghost Shark Hunt  [PREMIUM]", 10)
+mkLabel(TabEvents, "QueueTime: 4 min warning  |  Duration: 20 min", Theme.SubText, 11)
+mkLabel(TabEvents, "Fish: Ghost Shark  |  Tier: SECRET  |  Sell: 125,000", Theme.SubText, 12)
+mkLabel(TabEvents, "Probability: 1 in 500,000 — rarest in game!", Theme.Warn, 13)
+
+local ghostRow, ghostVal = mkRow(TabEvents, "Hunt Status", "Watching...", 14)
+evStatusLabels["Ghost Shark Hunt"] = ghostVal
+
+mkToggle(TabEvents, "Alert Me on Ghost Shark Hunt", "Sound + notification on detect", true, function(s)
+    EventState.GhostSharkAlert = s
+end, 15)
+
+mkToggle(TabEvents, "Auto Teleport to Hunt Zone", "TP to nearest ghost shark coord", false, function(s)
+    EventState.GhostSharkAutoTP = s
+end, 16)
+
+mkToggle(TabEvents, "Auto Fish During Hunt", "Auto-starts Detector for Ghost Shark", false, function(s)
+    EventState.GhostSharkAutoFish = s
+    -- If hunt already active, start now
+    if s and EventState.GhostSharkActive then
+        S.DetectorActive = true
+        startFisher()
+        notify("Auto-fishing started for active Ghost Shark Hunt!")
+    end
+end, 17)
+
+mkBtn(TabEvents, "🦈  TP to Nearest Ghost Shark Spot", true, function()
+    tpTo(nearestCoord(GHOST_SHARK_COORDS))
+    notify("Teleported to Ghost Shark Hunt zone!")
+end, 18)
+
+mkBtn(TabEvents, "📋  Ghost Shark Hunt Info", false, function()
+    notify("Ghost Shark Hunt\nQueue: 4 min | Active: 20 min\n3 spawn zones across the map\nGhost Shark: SECRET, 2e-6 chance")
+end, 19)
+
+-- ─ Megalodon Hunt ─────────────────────────────────────────
+mkSection(TabEvents, "  🦕  Megalodon Hunt  [PREMIUM]", 20)
+mkLabel(TabEvents, "Only ONE Megalodon per server — first wins!", Theme.Warn, 21)
+
+local megaRow, megaVal = mkRow(TabEvents, "Megalodon Status", "Watching...", 22)
+evStatusLabels["Megalodon Hunt"] = megaVal
+
+mkToggle(TabEvents, "Alert on Megalodon Hunt", "Sound + notify instantly", true, function(s)
+    EventState.MegaAlert = s
+end, 23)
+mkToggle(TabEvents, "Auto TP to Megalodon Zone", "Instant teleport on event start", false, function(s)
+    EventState.MegaAutoTP = s
+end, 24)
+
+-- ─ Leviathan Hunt ─────────────────────────────────────────
+mkSection(TabEvents, "  🐉  Leviathan Hunt  [PREMIUM]", 30)
+mkLabel(TabEvents, "Requires Leviathan Scale bait. Only 1 per server!", Theme.Warn, 31)
+
+local levRow, levVal = mkRow(TabEvents, "Leviathan Status", "Watching...", 32)
+evStatusLabels["Leviathan Hunt"] = levVal
+
+mkToggle(TabEvents, "Alert on Leviathan Hunt", "Notify when Leviathan Hunt starts", true, function(s)
+    EventState.LeviaAlert = s
+end, 33)
+mkToggle(TabEvents, "Auto TP to Leviathan Zone", "Teleport to Deep Ocean zone", false, function(s)
+    EventState.LeviaAutoTP = s
+end, 34)
+
+-- ─ Shark Hunt ─────────────────────────────────────────────
+mkSection(TabEvents, "  🌊  Shark Hunt & Others  [PREMIUM]", 40)
+
+local sharkRow, sharkVal = mkRow(TabEvents, "Shark Hunt Status", "Watching...", 41)
+evStatusLabels["Shark Hunt"] = sharkVal
+local wormRow, wormVal = mkRow(TabEvents, "Worm Hunt Status", "Watching...", 42)
+evStatusLabels["Worm Hunt"] = wormVal
+
+mkToggle(TabEvents, "Alert on Shark/Worm Hunt", "Notify on all Shark/Worm hunts", true, function(s)
+    EventState.SharkHuntAlert = s
+end, 43)
+mkToggle(TabEvents, "Auto TP on Shark Hunt", "Jump to Shark Hunt zone", false, function(s)
+    EventState.SharkHuntAutoTP = s
+end, 44)
+
+-- ─ Event Radar (master switch) ────────────────────────────
+mkSection(TabEvents, "  📡  Event Radar  (Master Switch)", 50)
+mkLabel(TabEvents, "Hooks into game Replion — same as real event system!", Theme.Accent, 51)
+mkLabel(TabEvents, "Must be ON for all event alerts to work.", Theme.SubText, 52)
+
+mkToggle(TabEvents, "All Event Alert", "Notify when ANY world event starts", true, function(s)
+    EventState.AllEventAlert = s
+end, 53)
+
+mkToggle(TabEvents, "Start Event Radar", "Begins monitoring the Events replion", false, function(s)
+    EventState.EventRadar = s
+    if s then
+        startEventRadar()
+    else
+        notify("Event Radar paused. Reconnect to restart.")
+    end
+end, 54)
+
+mkBtn(TabEvents, "⚡  Check All Active Events Now", true, function()
+    task.spawn(function()
+        local ok, Replion = pcall(function()
+            return require(ReplicatedStorage:WaitForChild("Packages",5):WaitForChild("Replion",5))
+        end)
+        if not ok then notify("Cannot access Replion!") return end
+        local ok2, evRep = pcall(function() return Replion.Client:WaitReplion("Events") end)
+        if not ok2 then notify("Cannot get Events replion!") return end
+        local ok3, evList = pcall(function() return evRep:GetExpect("Events") end)
+        if ok3 and evList and #evList > 0 then
+            notify("Active Events:\n" .. table.concat(evList, "\n"))
+        else
+            notify("No world events currently active.")
+        end
+    end)
+end, 55)
+
+mkBtn(TabEvents, "🔄  Restart Event Radar", false, function()
+    eventRadarConn = nil
+    startEventRadar()
+    notify("Event Radar restarted!")
+end, 56)
+
 TabButtons[1].Btn.MouseButton1Click:Fire()
 
 -- FishCaught tracker
