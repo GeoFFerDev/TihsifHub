@@ -447,6 +447,7 @@ local function stopInstantCatchHook()
 end
 
 local function startFisher()
+    S.DetectorActive = true
     if fishThread then pcall(task.cancel, fishThread) fishThread = nil end
     _setupFishListeners()
     startInstantCatchHook()
@@ -492,10 +493,9 @@ local function startFisher()
                 local castOk = false
                 if chargeRF then
                     -- Try multiple signatures the game might use
-                    castOk = pcall(function() chargeRF:InvokeServer() end)
-                    if not castOk then
-                        castOk = pcall(function() chargeRF:InvokeServer(nil) end)
-                    end
+                    castOk = pcall(function() chargeRF:InvokeServer(nil, nil, workspace:GetServerTimeNow(), nil) end)
+                    if not castOk then castOk = pcall(function() chargeRF:InvokeServer() end) end
+                    if not castOk then castOk = pcall(function() chargeRF:InvokeServer(nil) end) end
                 end
                 if not castOk and chargeEV then
                     pcall(function() chargeEV:FireServer() end)
@@ -541,6 +541,23 @@ local function startMegaPatrol(coords)
     end)
 end
 
+local megaCatchThread
+local function stopMegaInstantCatch()
+    if megaCatchThread then pcall(task.cancel, megaCatchThread) megaCatchThread = nil end
+end
+
+local function startMegaInstantCatch()
+    stopMegaInstantCatch()
+    local catchRF = getNet("CatchFishCompleted", true)
+    if not catchRF then return end
+    megaCatchThread = task.spawn(function()
+        while EventState and EventState.MegaActive and S.DetectorActive do
+            pcall(function() catchRF:InvokeServer() end)
+            task.wait(0.22)
+        end
+    end)
+end
+
 local function stopFisher()
     S.DetectorActive = false
     if fishThread then pcall(task.cancel, fishThread) fishThread = nil end
@@ -549,6 +566,7 @@ local function stopFisher()
     S.DetectorStatus = "Offline"
     _disconnectFishConns()
     stopInstantCatchHook()
+    stopMegaInstantCatch()
 end
 
 -- ============================================================
@@ -1218,7 +1236,7 @@ mkInput(TabFishing, "Catch delay (0 = instant)", "0", function(v)
     local n = tonumber(v) if n then S.CompleteDelay = n end
 end, 31)
 
-mkToggle(TabFishing, "Instant Catch Hook (Always)", "Completes minigame on 'Activated'", false, function(s)
+mkToggle(TabFishing, "Instant Catch Hook (Always)", "Completes minigame on 'Activated'", true, function(s)
     if s then startInstantCatchHook() else stopInstantCatchHook() end
 end, 32)
 
@@ -1604,6 +1622,7 @@ local function handleEventEnd(evName)
     elseif evName == "Megalodon Hunt" then
         EventState.MegaActive = false
         stopMegaPatrol()
+        stopMegaInstantCatch()
     end
     notify("⬛ Event ended: "..tostring(evName))
 end
@@ -1678,6 +1697,7 @@ local function handleEventStart(evName)
                     S.DetectorActive = true
                     startFisher()
                 end
+                startMegaInstantCatch()
                 notify("🎣 Megalodon auto-fish enabled (rod + patrol + instant catch).")
             end)
         end
